@@ -46,6 +46,9 @@ pub enum MakeNoteError {
         #[source]
         err: io::Error,
     },
+
+    #[error("could not store note at {destination:?} as a file exists with the same name. It still exists at {src:?}")]
+    NoteClobberPreventedError { src: String, destination: String },
 }
 
 enum SaveAction {
@@ -123,6 +126,12 @@ fn make_note_at(
 }
 
 fn store_note(tempfile: NamedTempFile, destination: &Path) -> Result<(), MakeNoteError> {
+    if let Err(err) = ensure_no_clobber(tempfile.path(), destination) {
+        try_preserve_note(tempfile)?;
+
+        return Err(err);
+    }
+
     // copy, don't use tempfile.persist as it does not work across filesystems
     match std::fs::copy(tempfile.path(), destination) {
         Ok(_bytes) => Ok(()),
@@ -136,6 +145,17 @@ fn store_note(tempfile: NamedTempFile, destination: &Path) -> Result<(), MakeNot
                 err,
             })
         }
+    }
+}
+
+fn ensure_no_clobber(src: &Path, destination: &Path) -> Result<(), MakeNoteError> {
+    if destination.exists() {
+        Err(MakeNoteError::NoteClobberPreventedError {
+            src: src.display().to_string(),
+            destination: destination.display().to_string(),
+        })
+    } else {
+        Ok(())
     }
 }
 
