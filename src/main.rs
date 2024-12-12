@@ -57,7 +57,7 @@ fn main() {
 
     match command.get_matches().subcommand() {
         Some(("new", submatches)) => run_new(&config, submatches),
-        Some(("daily", _submatches)) => todo!("daily notes"),
+        Some(("daily", _submatches)) => run_daily(&config),
         _ => unreachable!(),
     }
 }
@@ -71,7 +71,7 @@ fn cli_command() -> ClapCommand {
 }
 
 fn run_new(config: &Config, args: &clap::ArgMatches) {
-    ensure_notes_dir_exists(config).unwrap_or_exit("could not create notes root");
+    ensure_notes_dir_exists(config).unwrap_or_exit("could not create notes directory");
 
     let title = args
         .get_many::<String>("title")
@@ -79,6 +79,13 @@ fn run_new(config: &Config, args: &clap::ArgMatches) {
         .join(" ");
 
     quicknotes::make_note(config, title).unwrap_or_exit("could not create note");
+}
+
+fn run_daily(config: &Config) {
+    ensure_daily_dir_exists(config).unwrap_or_exit("could not create dailies directory");
+    let today = chrono::Local::now().date_naive();
+
+    quicknotes::make_or_open_daily(config, today).unwrap_or_exit("could not create daily note");
 }
 
 fn load_config() -> anyhow::Result<OnDiskConfig> {
@@ -143,6 +150,10 @@ fn ensure_config_directory_exists() -> anyhow::Result<()> {
 
 fn ensure_notes_dir_exists(config: &Config) -> anyhow::Result<()> {
     ensure_directory_exists(&config.notes_directory_path())
+}
+
+fn ensure_daily_dir_exists(config: &Config) -> anyhow::Result<()> {
+    ensure_directory_exists(&config.daily_directory_path())
 }
 
 fn ensure_directory_exists(path: &Path) -> anyhow::Result<()> {

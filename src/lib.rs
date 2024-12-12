@@ -1,4 +1,4 @@
-use chrono::TimeZone;
+use chrono::{NaiveDate, TimeZone};
 use io::Write;
 use note::{Preamble, SerializeError};
 use std::io;
@@ -63,10 +63,51 @@ impl Config {
     pub fn notes_directory_path(&self) -> PathBuf {
         self.notes_root.join(Path::new("notes"))
     }
+
+    pub fn daily_directory_path(&self) -> PathBuf {
+        self.notes_root.join(Path::new("daily"))
+    }
 }
 
 pub fn make_note(config: &Config, title: String) -> Result<(), MakeNoteError> {
     let filename = note::filename_for_title(&title, &config.note_extension);
+    let destination_path = config.notes_directory_path().join(filename);
+
+    make_note_at(config, title, &destination_path)
+}
+
+pub fn make_or_open_daily(config: &Config, date: NaiveDate) -> Result<(), MakeNoteError> {
+    let filename = note::filename_for_date(date, &config.note_extension);
+    let destination_path = config.notes_directory_path().join(filename);
+    let destination_exists = fs::metadata(&destination_path)
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false);
+
+    if destination_exists {
+        // The editor will do this for us
+        let _save_action =
+            run_editor(&config.editor_command, &destination_path).map_err(|err| {
+                MakeNoteError::EditorSpawnError {
+                    editor: config.editor_command.clone(),
+                    err,
+                }
+            })?;
+
+        Ok(())
+    } else {
+        make_note_at(
+            config,
+            date.format("%Y-%m-%d").to_string(),
+            &destination_path,
+        )
+    }
+}
+
+fn make_note_at(
+    config: &Config,
+    title: String,
+    destination_path: &Path,
+) -> Result<(), MakeNoteError> {
     let preamble = Preamble::new(title);
     let tempfile = NamedTempFile::new().map_err(MakeNoteError::CreateTempfileError)?;
     write_preamble(preamble, tempfile.path())?;
@@ -78,9 +119,7 @@ pub fn make_note(config: &Config, title: String) -> Result<(), MakeNoteError> {
         }
     })?;
 
-    let destination_path = config.notes_directory_path().join(filename);
-
-    store_note(tempfile, &destination_path)
+    store_note(tempfile, destination_path)
 }
 
 fn store_note(tempfile: NamedTempFile, destination: &Path) -> Result<(), MakeNoteError> {

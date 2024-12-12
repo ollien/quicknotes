@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Timelike};
 use chrono::{Local, Offset};
 use itertools::Itertools;
 use serde::Serialize;
@@ -31,7 +31,7 @@ impl Preamble<Local> {
     pub fn new(title: String) -> Self {
         Self {
             title,
-            created_at: chrono::Local::now(),
+            created_at: Local::now(),
         }
     }
 }
@@ -44,6 +44,10 @@ pub fn filename_for_title(title: &str, extension: &str) -> String {
         .join("-");
 
     base_name + extension
+}
+
+pub fn filename_for_date(date: NaiveDate, extension: &str) -> String {
+    date.format("%Y-%m-%d").to_string() + extension
 }
 
 fn remove_specials(s: &str) -> String {
@@ -147,5 +151,13 @@ mod tests {
     #[test]
     fn filename_for_title_removes_specials() {
         assert_eq!("im-a-note.txt", filename_for_title("i'm a note", ".txt"))
+    }
+
+    #[test]
+    fn filename_for_date_uses_date_in_simple_iso_format() {
+        assert_eq!(
+            "2015-10-21.txt",
+            filename_for_date(NaiveDate::from_ymd_opt(2015, 10, 21).unwrap(), ".txt")
+        )
     }
 }
