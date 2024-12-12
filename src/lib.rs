@@ -51,11 +51,6 @@ pub enum MakeNoteError {
     NoteClobberPreventedError { src: String, destination: String },
 }
 
-enum SaveAction {
-    SaveNote,
-    DiscardNote,
-}
-
 pub struct Config {
     pub notes_root: PathBuf,
     pub editor_command: String,
@@ -87,14 +82,12 @@ pub fn make_or_open_daily(config: &Config, date: NaiveDate) -> Result<(), MakeNo
         .unwrap_or(false);
 
     if destination_exists {
-        // The editor will do this for us
-        let _save_action =
-            run_editor(&config.editor_command, &destination_path).map_err(|err| {
-                MakeNoteError::EditorSpawnError {
-                    editor: config.editor_command.clone(),
-                    err,
-                }
-            })?;
+        run_editor(&config.editor_command, &destination_path).map_err(|err| {
+            MakeNoteError::EditorSpawnError {
+                editor: config.editor_command.clone(),
+                err,
+            }
+        })?;
 
         Ok(())
     } else {
@@ -195,12 +188,8 @@ fn write_preamble<Tz: TimeZone>(preamble: Preamble<Tz>, path: &Path) -> Result<(
     write!(file, "{}\n\n", serialized_preamble).map_err(MakeNoteError::PreambleWriteError)
 }
 
-fn run_editor(editor: &str, path: &Path) -> io::Result<SaveAction> {
-    let output = Command::new(editor).arg(path).spawn()?.wait()?;
+fn run_editor(editor: &str, path: &Path) -> io::Result<()> {
+    Command::new(editor).arg(path).spawn()?.wait()?;
 
-    if output.success() {
-        Ok(SaveAction::SaveNote)
-    } else {
-        Ok(SaveAction::DiscardNote)
-    }
+    Ok(())
 }
