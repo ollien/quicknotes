@@ -76,7 +76,7 @@ pub fn make_note(config: &Config, title: String) -> Result<(), MakeNoteError> {
 
 pub fn make_or_open_daily(config: &Config, date: NaiveDate) -> Result<(), MakeNoteError> {
     let filename = note::filename_for_date(date, &config.note_extension);
-    let destination_path = config.notes_directory_path().join(filename);
+    let destination_path = config.daily_directory_path().join(filename);
     let destination_exists = fs::metadata(&destination_path)
         .map(|metadata| metadata.is_file())
         .unwrap_or(false);
