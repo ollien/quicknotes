@@ -1,0 +1,20 @@
+[package]
+name = "quicknotes"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.94"
+chrono = "0.4.39"
+clap = { version = "4.5.23", features = ["derive"] }
+colored = "2.1.0"
+directories = "5.0.1"
+itertools = "0.13.0"
+serde = "1.0.215"
+serde_derive = "1.0.215"
+skim = "0.15.5"
+tempfile = "3.14.0"
+thiserror = "2.0.6"
+toml = "0.8.19"
