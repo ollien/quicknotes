@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-use tempfile::NamedTempFile;
+use tempfile::{Builder as TempFileBuilder, NamedTempFile};
 use thiserror::Error;
 
 mod note;
@@ -105,7 +105,11 @@ fn make_note_at(
     destination_path: &Path,
 ) -> Result<(), MakeNoteError> {
     let preamble = Preamble::new(title);
-    let tempfile = NamedTempFile::new().map_err(MakeNoteError::CreateTempfileError)?;
+    let tempfile = TempFileBuilder::new()
+        .suffix(&config.note_extension)
+        .tempfile()
+        .map_err(MakeNoteError::CreateTempfileError)?;
+
     write_preamble(preamble, tempfile.path())?;
 
     run_editor(&config.editor_command, tempfile.path()).map_err(|err| {
