@@ -6,6 +6,7 @@ use colored::Colorize;
 use directories::{ProjectDirs, UserDirs};
 use itertools::Itertools;
 use quicknotes::Config;
+use serde::{Deserialize, Deserializer};
 use serde_derive::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::fs;
@@ -21,6 +22,7 @@ trait UnwrapOrExit<T> {
 #[derive(Serialize, Deserialize)]
 struct OnDiskConfig {
     pub notes_root: PathBuf,
+    #[serde(deserialize_with = "deserialize_extension")]
     pub note_file_extension: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editor_command: Option<String>,
@@ -200,6 +202,15 @@ fn project_dirs() -> anyhow::Result<ProjectDirs> {
     )
 }
 
+fn deserialize_extension<'a, D: Deserializer<'a>>(deserializer: D) -> Result<String, D::Error> {
+    let ext: String = Deserialize::deserialize(deserializer)?;
+    if ext.starts_with('.') {
+        Ok(ext)
+    } else {
+        Ok(format!(".{ext}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,5 +239,18 @@ mod tests {
         let config = disk_config.into_full_config("vim".to_string());
 
         assert_eq!(config.editor_command, "vim");
+    }
+
+    #[test]
+    fn on_disk_config_into_full_adds_dot_before_extension() {
+        let disk_config = OnDiskConfig {
+            notes_root: Path::new("/home/me/notes").to_owned(),
+            note_file_extension: "txt".to_string(),
+            editor_command: None,
+        };
+
+        let config = disk_config.into_full_config("vim".to_string());
+
+        assert_eq!(config.note_extension, ".txt");
     }
 }
