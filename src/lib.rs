@@ -56,6 +56,7 @@ pub enum MakeNoteError {
 pub struct NoteConfig {
     pub root_dir: PathBuf,
     pub file_extension: String,
+    pub temp_root_override: Option<PathBuf>,
 }
 
 impl NoteConfig {
@@ -115,11 +116,8 @@ fn make_note_at<E: Editor>(
     title: String,
     destination_path: &Path,
 ) -> Result<(), MakeNoteError> {
+    let tempfile = make_tempfile(config)?;
     let preamble = Preamble::new(title);
-    let tempfile = TempFileBuilder::new()
-        .suffix(&config.file_extension)
-        .tempfile()
-        .map_err(MakeNoteError::CreateTempfileError)?;
 
     write_preamble(preamble, tempfile.path())?;
 
@@ -153,6 +151,21 @@ fn store_note(tempfile: NamedTempFile, destination: &Path) -> Result<(), MakeNot
                 err,
             })
         }
+    }
+}
+
+fn make_tempfile(config: &NoteConfig) -> Result<NamedTempFile, MakeNoteError> {
+    let mut builder = TempFileBuilder::new();
+    let builder = builder.suffix(&config.file_extension);
+
+    if let Some(temp_dir) = config.temp_root_override.as_ref() {
+        builder
+            .tempfile_in(temp_dir)
+            .map_err(MakeNoteError::CreateTempfileError)
+    } else {
+        builder
+            .tempfile()
+            .map_err(MakeNoteError::CreateTempfileError)
     }
 }
 

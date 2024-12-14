@@ -38,6 +38,7 @@ impl OnDiskConfig {
         let note_config = NoteConfig {
             root_dir: self.notes_root,
             file_extension: ".txt".to_string(),
+            temp_root_override: None,
         };
 
         (note_config, editor)
