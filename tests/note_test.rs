@@ -86,22 +86,7 @@ fn writes_notes_to_notes_directory() {
     let expected_note_path = roots.note_root.path().join("notes/my-cool-note.txt");
     let note_contents = fs::read_to_string(expected_note_path).expect("failed to open note");
 
-    let expected_note = textwrap::dedent(
-        r#"
-    ---
-    title = "my cool note"
-    created_at = 2015-10-21T07:28:00-07:00
-    ---
-
-    hello, world!
-    "#
-        .trim_start_matches('\n'),
-    );
-
-    assert_eq!(
-        note_contents, expected_note,
-        "note did not match pattern; note:\n{note_contents}"
-    );
+    insta::assert_snapshot!(note_contents);
 }
 
 #[test]
@@ -128,22 +113,7 @@ fn writes_dailies_to_notes_directory() {
     let expected_note_path = roots.note_root.path().join("daily/2015-10-21.txt");
     let note_contents = fs::read_to_string(expected_note_path).expect("failed to open note");
 
-    let expected_note = textwrap::dedent(
-        r#"
-    ---
-    title = "2015-10-21"
-    created_at = 2015-10-21T07:28:00-07:00
-    ---
-
-    today was a cool day
-    "#
-        .trim_start_matches('\n'),
-    );
-
-    assert_eq!(
-        note_contents, expected_note,
-        "note did not match pattern; note:\n{note_contents}"
-    );
+    insta::assert_snapshot!(note_contents);
 }
 
 #[test]
@@ -170,21 +140,5 @@ fn editing_an_existing_daily_alters_the_same_file() {
     let expected_note_path = roots.note_root.path().join("daily/2015-10-21.txt");
     let note_contents = fs::read_to_string(expected_note_path).expect("failed to open note");
 
-    let expected_note = textwrap::dedent(
-        r#"
-    ---
-    title = "2015-10-21"
-    created_at = 2015-10-21T07:28:00-07:00
-    ---
-
-    today was a cool day
-    I have more to say!
-    "#
-        .trim_start_matches('\n'),
-    );
-
-    assert_eq!(
-        note_contents, expected_note,
-        "note did not match pattern; note:\n{note_contents}"
-    );
+    insta::assert_snapshot!(note_contents);
 }
