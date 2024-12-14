@@ -5,7 +5,7 @@ use clap::{Arg, Command as ClapCommand};
 use colored::Colorize;
 use directories::{ProjectDirs, UserDirs};
 use itertools::Itertools;
-use quicknotes::Config;
+use quicknotes::{CommandEditor, NoteConfig};
 use serde::{Deserialize, Deserializer};
 use serde_derive::{Deserialize, Serialize};
 use std::fmt::Display;
@@ -29,12 +29,18 @@ struct OnDiskConfig {
 }
 
 impl OnDiskConfig {
-    fn into_full_config(self, fallback_editor: String) -> Config {
-        Config {
-            notes_root: self.notes_root,
-            editor_command: self.editor_command.unwrap_or(fallback_editor),
-            note_extension: ".txt".to_string(),
-        }
+    fn unpack(self, fallback_editor_command: &str) -> (NoteConfig, CommandEditor) {
+        let editor = CommandEditor::new(
+            self.editor_command
+                .unwrap_or_else(|| fallback_editor_command.to_owned()),
+        );
+
+        let note_config = NoteConfig {
+            root_dir: self.notes_root,
+            file_extension: ".txt".to_string(),
+        };
+
+        (note_config, editor)
     }
 }
 
@@ -53,13 +59,13 @@ impl<T, E: Display> UnwrapOrExit<T> for Result<T, E> {
 
 fn main() {
     let command = cli_command();
-    let config = load_config()
+    let (note_config, editor) = load_config()
         .unwrap_or_exit("could not load configuration file")
-        .into_full_config(fallback_editor());
+        .unpack(&fallback_editor());
 
     match command.get_matches().subcommand() {
-        Some(("new", submatches)) => run_new(&config, submatches),
-        Some(("daily", _submatches)) => run_daily(&config),
+        Some(("new", submatches)) => run_new(&note_config, &editor, submatches),
+        Some(("daily", _submatches)) => run_daily(&note_config, &editor),
         _ => unreachable!(),
     }
 }
@@ -72,7 +78,7 @@ fn cli_command() -> ClapCommand {
         .subcommand(ClapCommand::new("daily"))
 }
 
-fn run_new(config: &Config, args: &clap::ArgMatches) {
+fn run_new(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches) {
     ensure_notes_dir_exists(config).unwrap_or_exit("could not create notes directory");
 
     let title = args
@@ -80,14 +86,15 @@ fn run_new(config: &Config, args: &clap::ArgMatches) {
         .unwrap_or_default()
         .join(" ");
 
-    quicknotes::make_note(config, title).unwrap_or_exit("could not create note");
+    quicknotes::make_note(config, editor, title).unwrap_or_exit("could not create note");
 }
 
-fn run_daily(config: &Config) {
+fn run_daily(config: &NoteConfig, editor: &CommandEditor) {
     ensure_daily_dir_exists(config).unwrap_or_exit("could not create dailies directory");
     let today = chrono::Local::now().date_naive();
 
-    quicknotes::make_or_open_daily(config, today).unwrap_or_exit("could not create daily note");
+    quicknotes::make_or_open_daily(config, editor, today)
+        .unwrap_or_exit("could not create daily note");
 }
 
 fn load_config() -> anyhow::Result<OnDiskConfig> {
@@ -150,11 +157,11 @@ fn ensure_config_directory_exists() -> anyhow::Result<()> {
     ensure_directory_exists(&config_directory)
 }
 
-fn ensure_notes_dir_exists(config: &Config) -> anyhow::Result<()> {
+fn ensure_notes_dir_exists(config: &NoteConfig) -> anyhow::Result<()> {
     ensure_directory_exists(&config.notes_directory_path())
 }
 
-fn ensure_daily_dir_exists(config: &Config) -> anyhow::Result<()> {
+fn ensure_daily_dir_exists(config: &NoteConfig) -> anyhow::Result<()> {
     ensure_directory_exists(&config.daily_directory_path())
 }
 
@@ -214,43 +221,44 @@ fn deserialize_extension<'a, D: Deserializer<'a>>(deserializer: D) -> Result<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quicknotes::Editor;
 
     #[test]
-    fn on_disk_config_into_full_config_does_not_replace_configured_editor() {
+    fn on_disk_config_unpack_does_not_replace_configured_editor() {
         let disk_config = OnDiskConfig {
             notes_root: Path::new("/home/me/notes").to_owned(),
             note_file_extension: ".txt".to_string(),
             editor_command: Some("vim".to_string()),
         };
 
-        let config = disk_config.into_full_config("emacs".to_string());
+        let (_note_config, editor) = disk_config.unpack("emacs");
 
-        assert_eq!(config.editor_command, "vim");
+        assert_eq!(editor.name(), "vim");
     }
 
     #[test]
-    fn on_disk_config_into_full_config_sets_missing_editor() {
+    fn on_disk_config_unpacksets_missing_editor() {
         let disk_config = OnDiskConfig {
             notes_root: Path::new("/home/me/notes").to_owned(),
             note_file_extension: ".txt".to_string(),
             editor_command: None,
         };
 
-        let config = disk_config.into_full_config("vim".to_string());
+        let (_note_config, editor) = disk_config.unpack("vim");
 
-        assert_eq!(config.editor_command, "vim");
+        assert_eq!(editor.name(), "vim");
     }
 
     #[test]
-    fn on_disk_config_into_full_adds_dot_before_extension() {
+    fn on_disk_config_unwrap_adds_dot_before_extension() {
         let disk_config = OnDiskConfig {
             notes_root: Path::new("/home/me/notes").to_owned(),
             note_file_extension: "txt".to_string(),
             editor_command: None,
         };
 
-        let config = disk_config.into_full_config("vim".to_string());
+        let (note_config, _editor) = disk_config.unpack("vim");
 
-        assert_eq!(config.note_extension, ".txt");
+        assert_eq!(note_config.file_extension, ".txt");
     }
 }

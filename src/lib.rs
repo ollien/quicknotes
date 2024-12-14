@@ -1,15 +1,15 @@
 use chrono::{NaiveDate, TimeZone};
-use edit::CommandEditor;
 use io::Write;
 use note::{Preamble, SerializeError};
 use std::io;
 use std::{
     fs::{self, OpenOptions},
     path::{Path, PathBuf},
-    process::Command,
 };
 use tempfile::{Builder as TempFileBuilder, NamedTempFile};
 use thiserror::Error;
+
+pub use edit::{CommandEditor, Editor};
 
 mod edit;
 mod note;
@@ -53,68 +53,76 @@ pub enum MakeNoteError {
     NoteClobberPreventedError { src: String, destination: String },
 }
 
-pub struct Config {
-    pub notes_root: PathBuf,
-    pub editor_command: String,
-    pub note_extension: String,
+pub struct NoteConfig {
+    pub root_dir: PathBuf,
+    pub file_extension: String,
 }
 
-impl Config {
+impl NoteConfig {
     pub fn notes_directory_path(&self) -> PathBuf {
-        self.notes_root.join(Path::new("notes"))
+        self.root_dir.join(Path::new("notes"))
     }
 
     pub fn daily_directory_path(&self) -> PathBuf {
-        self.notes_root.join(Path::new("daily"))
+        self.root_dir.join(Path::new("daily"))
     }
 }
 
-pub fn make_note(config: &Config, title: String) -> Result<(), MakeNoteError> {
-    let filename = note::filename_for_title(&title, &config.note_extension);
+pub fn make_note<E: Editor>(
+    config: &NoteConfig,
+    editor: E,
+    title: String,
+) -> Result<(), MakeNoteError> {
+    let filename = note::filename_for_title(&title, &config.file_extension);
     let destination_path = config.notes_directory_path().join(filename);
 
-    make_note_at(config, title, &destination_path)
+    make_note_at(config, editor, title, &destination_path)
 }
 
-pub fn make_or_open_daily(config: &Config, date: NaiveDate) -> Result<(), MakeNoteError> {
-    let filename = note::filename_for_date(date, &config.note_extension);
+pub fn make_or_open_daily<E: Editor>(
+    config: &NoteConfig,
+    editor: E,
+    date: NaiveDate,
+) -> Result<(), MakeNoteError> {
+    let filename = note::filename_for_date(date, &config.file_extension);
     let destination_path = config.daily_directory_path().join(filename);
     let destination_exists = fs::metadata(&destination_path)
         .map(|metadata| metadata.is_file())
         .unwrap_or(false);
 
     if destination_exists {
-        run_editor(&config.editor_command, &destination_path).map_err(|err| {
-            MakeNoteError::EditorSpawnError {
-                editor: config.editor_command.clone(),
+        editor
+            .edit(&destination_path)
+            .map_err(|err| MakeNoteError::EditorSpawnError {
+                editor: editor.name().to_owned(),
                 err,
-            }
-        })?;
+            })?;
 
         Ok(())
     } else {
         make_note_at(
             config,
+            editor,
             date.format("%Y-%m-%d").to_string(),
             &destination_path,
         )
     }
 }
 
-fn make_note_at(
-    config: &Config,
+fn make_note_at<E: Editor>(
+    config: &NoteConfig,
+    editor: E,
     title: String,
     destination_path: &Path,
 ) -> Result<(), MakeNoteError> {
     let preamble = Preamble::new(title);
     let tempfile = TempFileBuilder::new()
-        .suffix(&config.note_extension)
+        .suffix(&config.file_extension)
         .tempfile()
         .map_err(MakeNoteError::CreateTempfileError)?;
 
     write_preamble(preamble, tempfile.path())?;
 
-    let editor = editor(&config.editor_command);
     editor
         .edit(tempfile.path())
         .map_err(|err| MakeNoteError::EditorSpawnError {
@@ -193,14 +201,4 @@ fn write_preamble<Tz: TimeZone>(preamble: Preamble<Tz>, path: &Path) -> Result<(
         .map_err(MakeNoteError::PreambleEncodeError)?;
 
     write!(file, "{}\n\n", serialized_preamble).map_err(MakeNoteError::PreambleWriteError)
-}
-
-fn editor(command: &str) -> impl Editor {
-    CommandEditor::new(command.to_owned())
-}
-
-fn run_editor(editor: &str, path: &Path) -> io::Result<()> {
-    Command::new(editor).arg(path).spawn()?.wait()?;
-
-    Ok(())
 }
