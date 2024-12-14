@@ -120,7 +120,7 @@ fn make_note_at<E: Editor, Tz: TimeZone>(
     destination_path: &Path,
 ) -> Result<(), MakeNoteError> {
     let tempfile = make_tempfile(config)?;
-    let preamble = Preamble::new(title, creation_time);
+    let preamble = Preamble::new(title, creation_time.fixed_offset());
 
     write_preamble(preamble, tempfile.path())?;
 
@@ -205,7 +205,7 @@ fn try_preserve_note(tempfile: NamedTempFile) -> Result<(), MakeNoteError> {
     }
 }
 
-fn write_preamble<Tz: TimeZone>(preamble: Preamble<Tz>, path: &Path) -> Result<(), MakeNoteError> {
+fn write_preamble(preamble: Preamble, path: &Path) -> Result<(), MakeNoteError> {
     let mut file = OpenOptions::new()
         .write(true)
         .create(false)

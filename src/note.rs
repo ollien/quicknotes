@@ -1,24 +1,44 @@
-use chrono::Offset;
+use std::io::{self, BufRead, BufReader, Read};
+
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Timelike};
+use chrono::{FixedOffset, Offset};
 use itertools::Itertools;
-use serde::Serialize;
-use serde::{ser, Serializer};
-use serde_derive::Serialize;
+use serde::{de, ser, Deserializer, Serializer};
+use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 use thiserror::Error;
 use toml::value::Datetime as TomlDateTime;
 
-#[derive(Serialize)]
-pub struct Preamble<Tz: TimeZone> {
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug)]
+pub struct Preamble {
     pub title: String,
-    #[serde(serialize_with = "serialize_datetime")]
-    pub created_at: DateTime<Tz>,
+    #[serde(
+        serialize_with = "serialize_datetime",
+        deserialize_with = "deserialize_datetime"
+    )]
+    pub created_at: DateTime<FixedOffset>,
 }
 
 #[derive(Error, Debug)]
 #[error(transparent)]
 pub struct SerializeError(toml::ser::Error);
 
-impl<Tz: TimeZone> Preamble<Tz> {
+#[derive(Error, Debug)]
+pub enum InvalidPreambleError {
+    #[error("Malformed preamble: preamble did not terminate")]
+    UnterminatedFence(),
+
+    #[error("Malformed preamble: '{0}' is not a valid fence")]
+    MalformedFence(String),
+
+    #[error("Malformed preamble: {0}")]
+    DeserializeError(toml::de::Error),
+
+    #[error(transparent)]
+    IOError(io::Error),
+}
+
+impl Preamble {
     pub fn serialize(&self) -> Result<String, SerializeError> {
         let toml_preamble = toml::to_string_pretty(self).map_err(SerializeError)?;
         let serialized = format!("---\n{}\n---", toml_preamble.trim_end());
@@ -27,8 +47,8 @@ impl<Tz: TimeZone> Preamble<Tz> {
     }
 }
 
-impl<Tz: TimeZone> Preamble<Tz> {
-    pub fn new(title: String, created_at: DateTime<Tz>) -> Self {
+impl Preamble {
+    pub fn new(title: String, created_at: DateTime<FixedOffset>) -> Self {
         Self { title, created_at }
     }
 }
@@ -45,6 +65,51 @@ pub fn filename_for_title(title: &str, extension: &str) -> String {
 
 pub fn filename_for_date(date: NaiveDate, extension: &str) -> String {
     date.format("%Y-%m-%d").to_string() + extension
+}
+
+pub fn extract_preamble<R: Read>(reader: R) -> Result<Preamble, InvalidPreambleError> {
+    let mut buffered_reader = BufReader::new(reader);
+    ensure_preamble_fence(&mut buffered_reader)?;
+    let toml = read_until_closing_fence(&mut buffered_reader)?;
+
+    toml::from_str(&toml).map_err(InvalidPreambleError::DeserializeError)
+}
+
+fn ensure_preamble_fence<R: BufRead>(mut reader: R) -> Result<(), InvalidPreambleError> {
+    let mut text = String::new();
+    reader
+        .read_line(&mut text)
+        .map_err(InvalidPreambleError::IOError)?;
+
+    if text == "---\n" {
+        Ok(())
+    } else {
+        Err(InvalidPreambleError::MalformedFence(text.to_owned()))
+    }
+}
+
+fn read_until_closing_fence<R: BufRead>(mut reader: R) -> Result<String, InvalidPreambleError> {
+    let mut toml = String::new();
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Err(err) => {
+                return Err(InvalidPreambleError::IOError(err));
+            }
+
+            Ok(0) => {
+                return Err(InvalidPreambleError::UnterminatedFence());
+            }
+
+            Ok(_n) if line == "---" || line == "---\n" => {
+                return Ok(toml);
+            }
+
+            Ok(_n) => {
+                toml += &line;
+            }
+        }
+    }
 }
 
 fn remove_specials(s: &str) -> String {
@@ -107,6 +172,38 @@ fn toml_datetime<Tz: TimeZone, S: Serializer>(dt: &DateTime<Tz>) -> Result<TomlD
     Ok(converted)
 }
 
+fn deserialize_datetime<'a, D: Deserializer<'a>>(
+    deserializer: D,
+) -> Result<chrono::DateTime<FixedOffset>, D::Error> {
+    let dt: TomlDateTime = Deserialize::deserialize(deserializer)?;
+    let date = dt.date.ok_or(de::Error::custom("missing date"))?;
+    let time = dt.time.ok_or(de::Error::custom("missing time"))?;
+    let offset = dt
+        .offset
+        .ok_or(de::Error::custom("missing timezone offset"))?;
+    let offset_minutes = match offset {
+        toml::value::Offset::Z => 0,
+        toml::value::Offset::Custom { minutes } => minutes,
+    };
+    let offset_seconds = offset_minutes * 60;
+
+    FixedOffset::east_opt(offset_seconds.into())
+        .ok_or_else(|| de::Error::custom("offset {offset_minutes} out of range"))?
+        .with_ymd_and_hms(
+            date.year.into(),
+            date.month.into(),
+            date.day.into(),
+            time.hour.into(),
+            time.minute.into(),
+            time.second.into(),
+        )
+        // Take the later of the two times, arbitrarily
+        .latest()
+        .ok_or_else(|| de::Error::custom("timestamp {dt} is unresolvable"))?
+        .with_nanosecond(time.nanosecond)
+        .ok_or_else(|| de::Error::custom("timestamp {dt} is unresolvable"))
+}
+
 fn utc_offset_seconds<Tz: TimeZone>(dt: &DateTime<Tz>) -> i32 {
     dt.offset().fix().local_minus_utc()
 }
@@ -114,6 +211,8 @@ fn utc_offset_seconds<Tz: TimeZone>(dt: &DateTime<Tz>) -> i32 {
 #[cfg(test)]
 mod tests {
     use chrono::FixedOffset;
+    use stringreader::StringReader;
+    use test_case::test_case;
 
     use super::*;
 
@@ -132,6 +231,24 @@ mod tests {
             "---\ntitle = \"Hello world\"\ncreated_at = 2015-10-21T07:28:00-07:00\n---",
             preamble.serialize().unwrap()
         );
+    }
+
+    #[test_case("---\ntitle = \"Hello world\"\ncreated_at = 2015-10-21T07:28:00-07:00\n---"; "preamble alone")]
+    #[test_case("---\ntitle = \"Hello world\"\ncreated_at = 2015-10-21T07:28:00-07:00\n---\nsick notes bro"; "preamble with data after it")]
+    fn can_read_preamble(contents: &str) {
+        let reader = StringReader::new(contents);
+
+        let preamble = extract_preamble(reader).expect("failed to parse preamble");
+        let expected = Preamble {
+            title: "Hello world".to_string(),
+            created_at: FixedOffset::east_opt(-7 * 60 * 60)
+                .unwrap()
+                .with_ymd_and_hms(2015, 10, 21, 7, 28, 0)
+                .single()
+                .unwrap(),
+        };
+
+        assert_eq!(preamble, expected);
     }
 
     #[test]
