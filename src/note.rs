@@ -121,9 +121,11 @@ mod tests {
     fn can_serialize_preamble_as_toml() {
         let preamble = Preamble {
             title: "Hello world".to_string(),
-            created_at: DateTime::from_timestamp(1445437680, 0)
+            created_at: FixedOffset::east_opt(-7 * 60 * 60)
                 .unwrap()
-                .with_timezone(&FixedOffset::east_opt(-7 * 60 * 60).unwrap()),
+                .with_ymd_and_hms(2015, 10, 21, 7, 28, 0)
+                .single()
+                .unwrap(),
         };
 
         assert_eq!(
