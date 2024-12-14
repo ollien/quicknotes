@@ -3,8 +3,8 @@ use std::{
     io::Write,
 };
 
+use chrono::{DateTime, FixedOffset};
 use quicknotes::{Editor, NoteConfig};
-use regex::Regex;
 use tempfile::{tempdir, TempDir};
 
 struct FilesystemRoots {
@@ -73,27 +73,33 @@ fn writes_notes_to_notes_directory() {
     let mut editor = TestEditor::new();
     editor.note_contents("hello, world!\n".to_string());
 
-    quicknotes::make_note(&config, editor, "my cool note".to_string())
-        .expect("could not write note");
+    quicknotes::make_note(
+        &config,
+        editor,
+        "my cool note".to_string(),
+        DateTime::from_timestamp(1445437680, 0)
+            .unwrap()
+            .with_timezone(&FixedOffset::east_opt(-7 * 60 * 60).unwrap()),
+    )
+    .expect("could not write note");
 
     let expected_note_path = roots.note_root.path().join("notes/my-cool-note.txt");
     let note_contents = fs::read_to_string(expected_note_path).expect("failed to open note");
 
-    let note_regex = Regex::new(&textwrap::dedent(
+    let expected_note = textwrap::dedent(
         r#"
-    ^---
+    ---
     title = "my cool note"
-    created_at = [^\n]+
+    created_at = 2015-10-21T07:28:00-07:00
     ---
 
     hello, world!
-    $"#
+    "#
         .trim_start_matches('\n'),
-    ))
-    .unwrap();
+    );
 
-    assert!(
-        note_regex.is_match(&note_contents),
+    assert_eq!(
+        note_contents, expected_note,
         "note did not match pattern; note:\n{note_contents}"
     );
 }
@@ -113,28 +119,29 @@ fn writes_dailies_to_notes_directory() {
     quicknotes::make_or_open_daily(
         &config,
         editor,
-        chrono::NaiveDate::from_ymd_opt(2015, 10, 21).unwrap(),
+        DateTime::from_timestamp(1445437680, 0)
+            .unwrap()
+            .with_timezone(&FixedOffset::east_opt(-7 * 60 * 60).unwrap()),
     )
     .expect("could not write note");
 
     let expected_note_path = roots.note_root.path().join("daily/2015-10-21.txt");
     let note_contents = fs::read_to_string(expected_note_path).expect("failed to open note");
 
-    let note_regex = Regex::new(&textwrap::dedent(
+    let expected_note = textwrap::dedent(
         r#"
-    ^---
+    ---
     title = "2015-10-21"
-    created_at = [^\n]+
+    created_at = 2015-10-21T07:28:00-07:00
     ---
 
     today was a cool day
-    $"#
+    "#
         .trim_start_matches('\n'),
-    ))
-    .unwrap();
+    );
 
-    assert!(
-        note_regex.is_match(&note_contents),
+    assert_eq!(
+        note_contents, expected_note,
         "note did not match pattern; note:\n{note_contents}"
     );
 }
@@ -148,43 +155,36 @@ fn editing_an_existing_daily_alters_the_same_file() {
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };
 
-    let mut editor = TestEditor::new();
-    editor.note_contents("today was a cool day\n".to_string());
+    let datetime = DateTime::from_timestamp(1445437680, 0)
+        .unwrap()
+        .with_timezone(&FixedOffset::east_opt(-7 * 60 * 60).unwrap());
 
-    quicknotes::make_or_open_daily(
-        &config,
-        &editor,
-        chrono::NaiveDate::from_ymd_opt(2015, 10, 21).unwrap(),
-    )
-    .expect("could not write note");
+    let mut editor = TestEditor::new();
+
+    editor.note_contents("today was a cool day\n".to_string());
+    quicknotes::make_or_open_daily(&config, &editor, datetime).expect("could not write note");
 
     editor.note_contents("I have more to say!\n".to_string());
-    quicknotes::make_or_open_daily(
-        &config,
-        &editor,
-        chrono::NaiveDate::from_ymd_opt(2015, 10, 21).unwrap(),
-    )
-    .expect("could not write note");
+    quicknotes::make_or_open_daily(&config, &editor, datetime).expect("could not write note");
 
     let expected_note_path = roots.note_root.path().join("daily/2015-10-21.txt");
     let note_contents = fs::read_to_string(expected_note_path).expect("failed to open note");
 
-    let note_regex = Regex::new(&textwrap::dedent(
+    let expected_note = textwrap::dedent(
         r#"
-    ^---
+    ---
     title = "2015-10-21"
-    created_at = [^\n]+
+    created_at = 2015-10-21T07:28:00-07:00
     ---
 
     today was a cool day
     I have more to say!
-    $"#
+    "#
         .trim_start_matches('\n'),
-    ))
-    .unwrap();
+    );
 
-    assert!(
-        note_regex.is_match(&note_contents),
+    assert_eq!(
+        note_contents, expected_note,
         "note did not match pattern; note:\n{note_contents}"
     );
 }

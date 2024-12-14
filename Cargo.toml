@@ -12,7 +12,6 @@ clap = { version = "4.5.23", features = ["derive"] }
 colored = "2.1.0"
 directories = "5.0.1"
 itertools = "0.13.0"
-regex = "1.11.1"
 serde = "1.0.215"
 serde_derive = "1.0.215"
 skim = "0.15.5"

@@ -726,7 +726,6 @@ dependencies = [
  "colored",
  "directories",
  "itertools",
- "regex",
  "serde",
  "serde_derive",
  "skim",

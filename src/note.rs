@@ -1,5 +1,5 @@
+use chrono::Offset;
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Timelike};
-use chrono::{Local, Offset};
 use itertools::Itertools;
 use serde::Serialize;
 use serde::{ser, Serializer};
@@ -27,12 +27,9 @@ impl<Tz: TimeZone> Preamble<Tz> {
     }
 }
 
-impl Preamble<Local> {
-    pub fn new(title: String) -> Self {
-        Self {
-            title,
-            created_at: Local::now(),
-        }
+impl<Tz: TimeZone> Preamble<Tz> {
+    pub fn new(title: String, created_at: DateTime<Tz>) -> Self {
+        Self { title, created_at }
     }
 }
 

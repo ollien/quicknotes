@@ -1,4 +1,4 @@
-use chrono::{NaiveDate, TimeZone};
+use chrono::{DateTime, TimeZone};
 use io::Write;
 use note::{Preamble, SerializeError};
 use std::io;
@@ -69,23 +69,24 @@ impl NoteConfig {
     }
 }
 
-pub fn make_note<E: Editor>(
+pub fn make_note<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
     title: String,
+    creation_time: DateTime<Tz>,
 ) -> Result<(), MakeNoteError> {
     let filename = note::filename_for_title(&title, &config.file_extension);
     let destination_path = config.notes_directory_path().join(filename);
 
-    make_note_at(config, editor, title, &destination_path)
+    make_note_at(config, editor, title, creation_time, &destination_path)
 }
 
-pub fn make_or_open_daily<E: Editor>(
+pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
-    date: NaiveDate,
+    creation_time: DateTime<Tz>,
 ) -> Result<(), MakeNoteError> {
-    let filename = note::filename_for_date(date, &config.file_extension);
+    let filename = note::filename_for_date(creation_time.date_naive(), &config.file_extension);
     let destination_path = config.daily_directory_path().join(filename);
     let destination_exists = fs::metadata(&destination_path)
         .map(|metadata| metadata.is_file())
@@ -104,20 +105,22 @@ pub fn make_or_open_daily<E: Editor>(
         make_note_at(
             config,
             editor,
-            date.format("%Y-%m-%d").to_string(),
+            creation_time.date_naive().format("%Y-%m-%d").to_string(),
+            creation_time,
             &destination_path,
         )
     }
 }
 
-fn make_note_at<E: Editor>(
+fn make_note_at<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
     title: String,
+    creation_time: DateTime<Tz>,
     destination_path: &Path,
 ) -> Result<(), MakeNoteError> {
     let tempfile = make_tempfile(config)?;
-    let preamble = Preamble::new(title);
+    let preamble = Preamble::new(title, creation_time);
 
     write_preamble(preamble, tempfile.path())?;
 

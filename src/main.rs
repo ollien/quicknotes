@@ -1,6 +1,7 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use anyhow::anyhow;
+use chrono::Local;
 use clap::{Arg, Command as ClapCommand};
 use colored::Colorize;
 use directories::{ProjectDirs, UserDirs};
@@ -87,14 +88,13 @@ fn run_new(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches)
         .unwrap_or_default()
         .join(" ");
 
-    quicknotes::make_note(config, editor, title).unwrap_or_exit("could not create note");
+    quicknotes::make_note(config, editor, title, Local::now())
+        .unwrap_or_exit("could not create note");
 }
 
 fn run_daily(config: &NoteConfig, editor: &CommandEditor) {
     ensure_daily_dir_exists(config).unwrap_or_exit("could not create dailies directory");
-    let today = chrono::Local::now().date_naive();
-
-    quicknotes::make_or_open_daily(config, editor, today)
+    quicknotes::make_or_open_daily(config, editor, Local::now())
         .unwrap_or_exit("could not create daily note");
 }
 
