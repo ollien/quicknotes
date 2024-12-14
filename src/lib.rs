@@ -1,3 +1,6 @@
+#![warn(clippy::all, clippy::pedantic)]
+#![allow(clippy::missing_errors_doc)]
+
 use chrono::{DateTime, TimeZone};
 use io::Write;
 use note::{Preamble, SerializeError};
@@ -60,10 +63,12 @@ pub struct NoteConfig {
 }
 
 impl NoteConfig {
+    #[must_use]
     pub fn notes_directory_path(&self) -> PathBuf {
         self.root_dir.join(Path::new("notes"))
     }
 
+    #[must_use]
     pub fn daily_directory_path(&self) -> PathBuf {
         self.root_dir.join(Path::new("daily"))
     }
@@ -73,7 +78,7 @@ pub fn make_note<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
     title: String,
-    creation_time: DateTime<Tz>,
+    creation_time: &DateTime<Tz>,
 ) -> Result<(), MakeNoteError> {
     let filename = note::filename_for_title(&title, &config.file_extension);
     let destination_path = config.notes_directory_path().join(filename);
@@ -84,7 +89,7 @@ pub fn make_note<E: Editor, Tz: TimeZone>(
 pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
-    creation_time: DateTime<Tz>,
+    creation_time: &DateTime<Tz>,
 ) -> Result<(), MakeNoteError> {
     let filename = note::filename_for_date(creation_time.date_naive(), &config.file_extension);
     let destination_path = config.daily_directory_path().join(filename);
@@ -116,13 +121,13 @@ fn make_note_at<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
     title: String,
-    creation_time: DateTime<Tz>,
+    creation_time: &DateTime<Tz>,
     destination_path: &Path,
 ) -> Result<(), MakeNoteError> {
     let tempfile = make_tempfile(config)?;
     let preamble = Preamble::new(title, creation_time.fixed_offset());
 
-    write_preamble(preamble, tempfile.path())?;
+    write_preamble(&preamble, tempfile.path())?;
 
     editor
         .edit(tempfile.path())
@@ -205,7 +210,7 @@ fn try_preserve_note(tempfile: NamedTempFile) -> Result<(), MakeNoteError> {
     }
 }
 
-fn write_preamble(preamble: Preamble, path: &Path) -> Result<(), MakeNoteError> {
+fn write_preamble(preamble: &Preamble, path: &Path) -> Result<(), MakeNoteError> {
     let mut file = OpenOptions::new()
         .write(true)
         .create(false)
@@ -216,5 +221,5 @@ fn write_preamble(preamble: Preamble, path: &Path) -> Result<(), MakeNoteError> 
         .serialize()
         .map_err(MakeNoteError::PreambleEncodeError)?;
 
-    write!(file, "{}\n\n", serialized_preamble).map_err(MakeNoteError::PreambleWriteError)
+    write!(file, "{serialized_preamble}\n\n").map_err(MakeNoteError::PreambleWriteError)
 }

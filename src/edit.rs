@@ -20,6 +20,7 @@ pub struct CommandEditor {
 }
 
 impl CommandEditor {
+    #[must_use]
     pub fn new(command: String) -> Self {
         Self { command }
     }

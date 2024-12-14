@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn filename_for_title_converts_to_lowercase() {
-        assert_eq!("note.txt", filename_for_title("Note", ".txt"))
+        assert_eq!("note.txt", filename_for_title("Note", ".txt"));
     }
 
     #[test]
@@ -261,12 +261,12 @@ mod tests {
         assert_eq!(
             "my-awesome-note.txt",
             filename_for_title("my awesome note", ".txt")
-        )
+        );
     }
 
     #[test]
     fn filename_for_title_removes_specials() {
-        assert_eq!("im-a-note.txt", filename_for_title("i'm a note", ".txt"))
+        assert_eq!("im-a-note.txt", filename_for_title("i'm a note", ".txt"));
     }
 
     #[test]
@@ -274,6 +274,6 @@ mod tests {
         assert_eq!(
             "2015-10-21.txt",
             filename_for_date(NaiveDate::from_ymd_opt(2015, 10, 21).unwrap(), ".txt")
-        )
+        );
     }
 }

@@ -23,8 +23,10 @@ trait UnwrapOrExit<T> {
 #[derive(Serialize, Deserialize)]
 struct OnDiskConfig {
     pub notes_root: PathBuf,
+
     #[serde(deserialize_with = "deserialize_extension")]
     pub note_file_extension: String,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editor_command: Option<String>,
 }
@@ -88,13 +90,13 @@ fn run_new(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches)
         .unwrap_or_default()
         .join(" ");
 
-    quicknotes::make_note(config, editor, title, Local::now())
+    quicknotes::make_note(config, editor, title, &Local::now())
         .unwrap_or_exit("could not create note");
 }
 
 fn run_daily(config: &NoteConfig, editor: &CommandEditor) {
     ensure_daily_dir_exists(config).unwrap_or_exit("could not create dailies directory");
-    quicknotes::make_or_open_daily(config, editor, Local::now())
+    quicknotes::make_or_open_daily(config, editor, &Local::now())
         .unwrap_or_exit("could not create daily note");
 }
 
