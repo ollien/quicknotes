@@ -1,4 +1,5 @@
 use chrono::{NaiveDate, TimeZone};
+use edit::CommandEditor;
 use io::Write;
 use note::{Preamble, SerializeError};
 use std::io;
@@ -10,6 +11,7 @@ use std::{
 use tempfile::{Builder as TempFileBuilder, NamedTempFile};
 use thiserror::Error;
 
+mod edit;
 mod note;
 
 #[derive(Error, Debug)]
@@ -112,12 +114,13 @@ fn make_note_at(
 
     write_preamble(preamble, tempfile.path())?;
 
-    run_editor(&config.editor_command, tempfile.path()).map_err(|err| {
-        MakeNoteError::EditorSpawnError {
-            editor: config.editor_command.clone(),
+    let editor = editor(&config.editor_command);
+    editor
+        .edit(tempfile.path())
+        .map_err(|err| MakeNoteError::EditorSpawnError {
+            editor: editor.name().to_owned(),
             err,
-        }
-    })?;
+        })?;
 
     store_note(tempfile, destination_path)
 }
@@ -190,6 +193,10 @@ fn write_preamble<Tz: TimeZone>(preamble: Preamble<Tz>, path: &Path) -> Result<(
         .map_err(MakeNoteError::PreambleEncodeError)?;
 
     write!(file, "{}\n\n", serialized_preamble).map_err(MakeNoteError::PreambleWriteError)
+}
+
+fn editor(command: &str) -> impl Editor {
+    CommandEditor::new(command.to_owned())
 }
 
 fn run_editor(editor: &str, path: &Path) -> io::Result<()> {
