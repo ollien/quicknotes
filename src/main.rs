@@ -40,7 +40,7 @@ impl OnDiskConfig {
 
         let note_config = NoteConfig {
             root_dir: self.notes_root,
-            file_extension: ".txt".to_string(),
+            file_extension: self.note_file_extension,
             temp_root_override: None,
         };
 
@@ -225,6 +225,7 @@ fn deserialize_extension<'a, D: Deserializer<'a>>(deserializer: D) -> Result<Str
 mod tests {
     use super::*;
     use quicknotes::Editor;
+    use serde::de::{value::StrDeserializer, IntoDeserializer};
 
     #[test]
     fn on_disk_config_unpack_does_not_replace_configured_editor() {
@@ -240,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn on_disk_config_unpacksets_missing_editor() {
+    fn on_disk_config_unpack_sets_missing_editor() {
         let disk_config = OnDiskConfig {
             notes_root: Path::new("/home/me/notes").to_owned(),
             note_file_extension: ".txt".to_string(),
@@ -253,15 +254,35 @@ mod tests {
     }
 
     #[test]
-    fn on_disk_config_unwrap_adds_dot_before_extension() {
+    fn on_disk_config_unpack_copies_file_extension() {
         let disk_config = OnDiskConfig {
             notes_root: Path::new("/home/me/notes").to_owned(),
-            note_file_extension: "txt".to_string(),
+            note_file_extension: ".md".to_string(),
             editor_command: None,
         };
 
         let (note_config, _editor) = disk_config.unpack("vim");
 
-        assert_eq!(note_config.file_extension, ".txt");
+        assert_eq!(note_config.file_extension, ".md");
+    }
+
+    #[test]
+    fn deserialize_extension_adds_dot_to_file_extension() {
+        let deserializer: StrDeserializer<'static, serde::de::value::Error> =
+            "md".into_deserializer();
+        let extension =
+            deserialize_extension(deserializer).expect("failed to deserialize extension");
+
+        assert_eq!(extension, ".md");
+    }
+
+    #[test]
+    fn deserialize_extension_preserves_dot_in_file_extension() {
+        let deserializer: StrDeserializer<'static, serde::de::value::Error> =
+            ".txt".into_deserializer();
+        let extension =
+            deserialize_extension(deserializer).expect("failed to deserialize extension");
+
+        assert_eq!(extension, ".txt");
     }
 }
