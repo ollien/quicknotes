@@ -58,7 +58,6 @@ impl Editor for TestEditor {
     fn edit(&self, path: &std::path::Path) -> std::io::Result<()> {
         if let Some(to_insert) = self.to_insert.as_ref() {
             let mut file = OpenOptions::new()
-                .write(true)
                 .append(true)
                 .open(path)
                 .expect("could not open note file for editing");

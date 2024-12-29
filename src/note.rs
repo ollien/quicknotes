@@ -84,7 +84,7 @@ fn ensure_preamble_fence<R: BufRead>(mut reader: R) -> Result<(), InvalidPreambl
     if text == "---\n" {
         Ok(())
     } else {
-        Err(InvalidPreambleError::MalformedFence(text.to_owned()))
+        Err(InvalidPreambleError::MalformedFence(text.clone()))
     }
 }
 
