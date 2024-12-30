@@ -15,8 +15,7 @@ use serde_derive::{Deserialize, Serialize};
 use simplelog::TermLogger;
 use std::error::Error;
 use std::fmt::Display;
-use std::fs::File;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::{env, process};
@@ -134,14 +133,6 @@ fn run_daily(config: &NoteConfig, editor: &CommandEditor) {
 
 fn run_index(config: &NoteConfig) {
     ensure_root_dir_exists(config).unwrap_or_exit("could not create root quicknotes directory");
-
-    // This is a bit of a hack, but is easier than trying to prune stale entries from
-    // the index
-    OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(config.index_db_path())
-        .unwrap_or_exit("could not truncate old index");
 
     quicknotes::index_notes(config).unwrap_or_exit("could not index notes");
 }

@@ -5,12 +5,8 @@ use std::{
 
 use chrono::{DateTime, FixedOffset, TimeZone};
 use quicknotes::{Editor, NoteConfig};
-use tempfile::{tempdir, TempDir};
 
-struct FilesystemRoots {
-    note_root: TempDir,
-    temp_root: TempDir,
-}
+mod testutil;
 
 fn test_time() -> DateTime<FixedOffset> {
     FixedOffset::east_opt(-7 * 60 * 60)
@@ -18,21 +14,6 @@ fn test_time() -> DateTime<FixedOffset> {
         .with_ymd_and_hms(2015, 10, 21, 7, 28, 0)
         .single()
         .unwrap()
-}
-
-fn setup_filesystem() -> FilesystemRoots {
-    let note_root = tempdir().expect("could not make temp dir for notes root");
-    let temp_root = tempdir().expect("could not make temp dir for temp root");
-
-    std::fs::create_dir(note_root.path().join("notes"))
-        .expect("could not make notes dir for testing");
-    std::fs::create_dir(note_root.path().join("daily"))
-        .expect("could not make daily dir for testing");
-
-    FilesystemRoots {
-        note_root,
-        temp_root,
-    }
 }
 
 #[derive(Default)]
@@ -70,7 +51,7 @@ impl Editor for TestEditor {
 
 #[test]
 fn writes_notes_to_notes_directory() {
-    let roots = setup_filesystem();
+    let roots = testutil::setup_filesystem();
     let config = NoteConfig {
         file_extension: ".txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),
@@ -91,7 +72,7 @@ fn writes_notes_to_notes_directory() {
 
 #[test]
 fn writes_dailies_to_notes_directory() {
-    let roots = setup_filesystem();
+    let roots = testutil::setup_filesystem();
     let config = NoteConfig {
         file_extension: ".txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),
@@ -111,7 +92,7 @@ fn writes_dailies_to_notes_directory() {
 
 #[test]
 fn editing_an_existing_daily_alters_the_same_file() {
-    let roots = setup_filesystem();
+    let roots = testutil::setup_filesystem();
     let config = NoteConfig {
         file_extension: ".txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),

@@ -182,7 +182,11 @@ impl From<OpenNoteInEditorError> for OpenNoteError {
 }
 
 pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
-    let mut connection = open_index_database(config)?;
+    // This is a bit of a hack, but is easier than trying to prune stale entries from
+    // the index
+    truncate_index_database(config).map_err(IndexNotesError::TruncateError)?;
+
+    let mut connection = open_index_database(config).map_err(IndexNotesError::IndexOpenError)?;
 
     let file_iterator = WalkDir::new(config.notes_directory_path())
         .into_iter()
@@ -207,45 +211,42 @@ pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
 
 #[derive(Error, Debug)]
 pub enum IndexNotesError {
+    #[error("could not truncate old index database: {0}")]
+    TruncateError(io::Error),
+
+    #[error(transparent)]
+    IndexOpenError(IndexOpenError),
+}
+
+#[derive(Error, Debug)]
+pub enum IndexOpenError {
     #[error("could not open index database: {0}")]
-    OpenError(rusqlite::Error),
+    ConnectionOpenError(rusqlite::Error),
 
     #[error("could not setup index database: {0}")]
     MigrationError(MigrationError),
 }
 
 pub fn indexed_notes(config: &NoteConfig) -> Result<HashMap<PathBuf, Preamble>, IndexedNotesError> {
-    let mut connection = open_index_database(config)?;
+    let mut connection = open_index_database(config).map_err(IndexedNotesError::IndexOpenError)?;
 
     index::all_notes(&mut connection).map_err(IndexedNotesError::QueryError)
 }
 
 #[derive(Error, Debug)]
 pub enum IndexedNotesError {
-    #[error("could not open index database: {0}")]
-    OpenError(rusqlite::Error),
-
-    #[error("could not setup index database: {0}")]
-    MigrationError(MigrationError),
+    #[error(transparent)]
+    IndexOpenError(IndexOpenError),
 
     #[error("could not query index database: {0}")]
     QueryError(LookupError),
 }
 
-impl From<IndexNotesError> for IndexedNotesError {
-    fn from(err: IndexNotesError) -> Self {
-        match err {
-            IndexNotesError::OpenError(err) => Self::OpenError(err),
-            IndexNotesError::MigrationError(err) => Self::MigrationError(err),
-        }
-    }
-}
-
-fn open_index_database(config: &NoteConfig) -> Result<Connection, IndexNotesError> {
+fn open_index_database(config: &NoteConfig) -> Result<Connection, IndexOpenError> {
     let mut connection =
-        Connection::open(config.index_db_path()).map_err(IndexNotesError::OpenError)?;
+        Connection::open(config.index_db_path()).map_err(IndexOpenError::ConnectionOpenError)?;
 
-    index::setup_database(&mut connection).map_err(IndexNotesError::MigrationError)?;
+    index::setup_database(&mut connection).map_err(IndexOpenError::MigrationError)?;
 
     Ok(connection)
 }
@@ -421,4 +422,19 @@ fn open_note_in_editor<E: Editor>(editor: E, path: &Path) -> Result<(), OpenNote
 enum OpenNoteInEditorError {
     #[error(transparent)]
     EditorSpawnError(EditorSpawnError),
+}
+
+fn truncate_index_database(config: &NoteConfig) -> Result<(), io::Error> {
+    OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(config.index_db_path())
+        .map(|_file| ())
+        .or_else(|err| {
+            if err.kind() == io::ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(err)
+            }
+        })
 }
