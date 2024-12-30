@@ -2,7 +2,7 @@
 #![allow(clippy::missing_errors_doc)]
 
 use chrono::{DateTime, TimeZone};
-use index::{IndexError, MigrationError};
+use index::{LookupError, MigrationError};
 use io::Write;
 use log::warn;
 use note::{Preamble, SerializeError};
@@ -73,7 +73,7 @@ pub enum IndexNotesError {
     MigrationError(MigrationError),
 
     #[error("could not query index database: {0}")]
-    QueryError(IndexError),
+    QueryError(LookupError),
 }
 
 #[derive(Error, Debug)]

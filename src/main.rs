@@ -7,20 +7,19 @@ use colored::Colorize;
 use directories::{ProjectDirs, UserDirs};
 use itertools::Itertools;
 use log::LevelFilter;
+use nucleo_picker::nucleo::pattern::CaseMatching;
+use nucleo_picker::{Picker, PickerOptions, Render};
 use quicknotes::{CommandEditor, Editor, NoteConfig, NotePreamble};
 use serde::{Deserialize, Deserializer};
 use serde_derive::{Deserialize, Serialize};
 use simplelog::TermLogger;
-use skim::prelude::SkimOptionsBuilder;
-use skim::{Skim, SkimItem};
-use std::borrow::Cow;
+use std::error::Error;
 use std::fmt::Display;
+use std::fs;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::{env, process};
-use std::{fs, thread};
 
 trait UnwrapOrExit<T> {
     fn unwrap_or_exit(self, msg: &str) -> T;
@@ -29,6 +28,16 @@ trait UnwrapOrExit<T> {
 struct IndexedNote {
     path: PathBuf,
     preamble: NotePreamble,
+}
+
+struct IndexedNoteRenderer;
+
+impl Render<IndexedNote> for IndexedNoteRenderer {
+    type Str<'a> = &'a str;
+
+    fn render<'a>(&self, note: &'a IndexedNote) -> Self::Str<'a> {
+        &note.preamble.title
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -40,12 +49,6 @@ struct OnDiskConfig {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editor_command: Option<String>,
-}
-
-impl SkimItem for IndexedNote {
-    fn text(&self) -> std::borrow::Cow<str> {
-        Cow::Borrowed(&self.preamble.title)
-    }
 }
 
 impl OnDiskConfig {
@@ -138,46 +141,25 @@ fn run_open(config: &NoteConfig, editor: &CommandEditor) {
     ensure_root_dir_exists(config).unwrap_or_exit("could not create root quicknotes directory");
 
     let indexed_notes = quicknotes::indexed_notes(config).unwrap_or_exit("couldn't load notes");
-    let (notes_tx, notes_rx) = skim::prelude::unbounded();
+    let mut picker = PickerOptions::new()
+        .highlight(true)
+        .case_matching(CaseMatching::Smart)
+        .picker(IndexedNoteRenderer);
 
-    // Move the unpacking of the indexed notes into another thread so skim can start quickly
-    thread::spawn(move || {
-        indexed_notes
-            .into_iter()
-            .map(|(path, preamble)| Arc::new(IndexedNote { path, preamble }) as Arc<dyn SkimItem>)
-            .for_each(|note| {
-                // send can fail only when there's nothing to receive the data. If this happens,
-                // that's fine, because that means skim isn't going to display the data anyway.
-                //
-                // https://docs.rs/crossbeam/latest/crossbeam/channel/struct.SendError.html
-                let _ = notes_tx.send(note);
-            });
-    });
+    let picker_injector = picker.injector();
 
-    let options = SkimOptionsBuilder::default()
-        .no_info(true)
-        .no_multi(true)
-        .build()
-        .unwrap();
+    indexed_notes
+        .into_iter()
+        .map(|(path, preamble)| IndexedNote { path, preamble })
+        .for_each(|note| {
+            picker_injector.push(note);
+        });
 
-    let res = Skim::run_with(&options, Some(notes_rx)).unwrap();
-    if res.is_abort {
-        return;
+    if let Some(selected_note) = pick(&mut picker).unwrap_or_exit("could not launch picker") {
+        editor
+            .edit(&selected_note.path)
+            .unwrap_or_exit("could not open selected file");
     }
-
-    let Some(selected) = res.selected_items.first() else {
-        return;
-    };
-
-    let selected_path = &selected
-        .as_any()
-        .downcast_ref::<IndexedNote>()
-        .expect("note was not expected type of IndexedNote")
-        .path;
-
-    editor
-        .edit(selected_path)
-        .unwrap_or_exit("could not open selected file");
 }
 
 fn load_config() -> anyhow::Result<OnDiskConfig> {
@@ -302,6 +284,29 @@ fn deserialize_extension<'a, D: Deserializer<'a>>(deserializer: D) -> Result<Str
         Ok(ext)
     } else {
         Ok(format!(".{ext}"))
+    }
+}
+
+fn pick<T: Send + Sync + 'static, R: Render<T>>(
+    picker: &mut Picker<T, R>,
+) -> Result<Option<&T>, io::Error> {
+    remap_picker_result(picker.pick())
+}
+
+fn remap_picker_result<T>(result: Result<Option<T>, io::Error>) -> Result<Option<T>, io::Error> {
+    match result {
+        Ok(data) => Ok(data),
+        Err(err) => {
+            // There is no way to other way do this without producing a copy.
+            // The library guarantees that this wil be the message for a keyboard interrupt.
+            // So, while brittle, it does work.
+            #[allow(deprecated)]
+            if err.kind() == io::ErrorKind::Other && err.description() == "keyboard interrupt" {
+                Ok(None)
+            } else {
+                Err(err)
+            }
+        }
     }
 }
 

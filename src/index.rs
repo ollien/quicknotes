@@ -20,7 +20,7 @@ pub struct MigrationError(#[from] rusqlite_migration::Error);
 
 #[derive(Error, Debug)]
 #[error(transparent)]
-pub struct IndexError(#[from] rusqlite::Error);
+pub struct LookupError(#[from] rusqlite::Error);
 
 #[derive(Error, Debug)]
 pub enum InsertError {
@@ -76,7 +76,7 @@ pub fn add_note(
         .map_err(InsertError::DatabaseError)
 }
 
-pub fn all_notes(connection: &mut Connection) -> Result<HashMap<PathBuf, Preamble>, IndexError> {
+pub fn all_notes(connection: &mut Connection) -> Result<HashMap<PathBuf, Preamble>, LookupError> {
     let mut query =
         connection.prepare("SELECT filepath, title, created_at, utc_offset_seconds FROM notes;")?;
 
