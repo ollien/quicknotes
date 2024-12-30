@@ -146,14 +146,14 @@ pub enum MakeNoteError {
 #[derive(Error, Debug)]
 #[allow(clippy::enum_variant_names)]
 pub enum IndexNoteError {
-    #[error("could not open note at {0} for indexing: {1}")]
-    OpenError(PathBuf, #[source] io::Error),
+    #[error("could not open note for indexing: {0}")]
+    OpenError(io::Error),
 
-    #[error("could not read preamble from note at {0}: {1}")]
-    PreambleError(PathBuf, #[source] note::InvalidPreambleError),
+    #[error("could not read preamble from note: {0}")]
+    PreambleError(note::InvalidPreambleError),
 
-    #[error("could not index note at {0}: {1}")]
-    IndexError(PathBuf, #[source] index::InsertError),
+    #[error(transparent)]
+    IndexError(index::InsertError),
 }
 
 #[derive(Error, Debug)]
@@ -231,7 +231,11 @@ pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
         }
 
         if let Err(err) = index_note(&mut connection, entry.path()) {
-            warn!("{}", err);
+            warn!(
+                "could not index note at {}: {}",
+                entry.path().display(),
+                err
+            );
         }
     }
 
@@ -302,14 +306,10 @@ fn unpack_walkdir_entry_result(
 }
 
 fn index_note(index_connection: &mut Connection, path: &Path) -> Result<(), IndexNoteError> {
-    let mut file =
-        File::open(path).map_err(|err| IndexNoteError::OpenError(path.to_owned(), err))?;
+    let mut file = File::open(path).map_err(IndexNoteError::OpenError)?;
+    let preamble = note::extract_preamble(&mut file).map_err(IndexNoteError::PreambleError)?;
 
-    let preamble = note::extract_preamble(&mut file)
-        .map_err(|err| IndexNoteError::PreambleError(path.to_owned(), err))?;
-
-    index::add_note(index_connection, &preamble, path)
-        .map_err(|err| IndexNoteError::IndexError(path.to_owned(), err))
+    index::add_note(index_connection, &preamble, path).map_err(IndexNoteError::IndexError)
 }
 
 fn make_note_at<E: Editor, Tz: TimeZone>(
@@ -441,7 +441,7 @@ fn open_note_in_editor<E: Editor>(
 
     index_note(&mut index_connection, path)
         .or_else(|err| {
-            let IndexNoteError::PreambleError(_path, err) = err else {
+            let IndexNoteError::PreambleError(err) = err else {
                 return Err(err)
             };
 
