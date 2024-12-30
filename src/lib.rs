@@ -4,7 +4,6 @@
 use chrono::{DateTime, TimeZone};
 use index::{LookupError, MigrationError};
 use io::Write;
-use log::warn;
 use note::{Preamble, SerializeError};
 use rusqlite::Connection;
 use std::collections::HashMap;
@@ -24,6 +23,17 @@ pub use note::Preamble as NotePreamble;
 mod edit;
 mod index;
 mod note;
+
+macro_rules! warning {
+        ($($arg:tt)*) => {{
+            use colored::Colorize;
+
+            eprint!("{}: ", "warning".yellow());
+            eprintln!($($arg)*)
+        }};
+    }
+
+pub(crate) use warning;
 
 pub struct NoteConfig {
     pub root_dir: PathBuf,
@@ -231,7 +241,7 @@ pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
         }
 
         if let Err(err) = index_note(&mut connection, entry.path()) {
-            warn!(
+            warning!(
                 "could not index note at {}: {}",
                 entry.path().display(),
                 err
@@ -291,13 +301,13 @@ fn unpack_walkdir_entry_result(
         Ok(entry) => Ok(entry),
         Err(err) => {
             if let Some(path) = err.path() {
-                warn!(
+                warning!(
                     "Cannot traverse {}: {}",
                     path.display().to_string(),
                     io::Error::from(err)
                 );
             } else {
-                warn!("Cannot traverse notes: {}", io::Error::from(err));
+                warning!("Cannot traverse notes: {}", io::Error::from(err));
             }
 
             Err(())
@@ -391,8 +401,8 @@ fn try_preserve_note(tempfile: NamedTempFile) -> Result<(), MakeNoteError> {
             error: keep_error, ..
         }) => match fs::read_to_string(tempfile_path) {
             Ok(contents) => {
-                eprintln!("Your note could not be saved due to an error. Here are its contents");
-                println!("{contents}");
+                warning!("Your note could not be saved due to an error. Here are its contents");
+                eprintln!("{contents}");
                 Ok(())
             }
             Err(read_error) => Err(MakeNoteError::NoteLostError {
@@ -447,12 +457,12 @@ fn open_note_in_editor<E: Editor>(
 
             match index::delete_note(&mut index_connection, path) {
                 Ok(()) => {
-                    warn!("After editing, the note could not be reindexed. It has been removed from the index. Original error: {err}");
+                    warning!("After editing, the note could not be reindexed. It has been removed from the index. Original error: {err}");
                     Ok(())
                 }
 
                 Err(delete_err) => {
-                    warn!("After editing, the note could not be reindexed. There was a subsequent failure that prevented it from being removed from the index, so there is now a stale entry. You can fix this by running `quicknotes index`. Original error: {err}; Delete error: {delete_err}");
+                    warning!("After editing, the note could not be reindexed. There was a subsequent failure that prevented it from being removed from the index, so there is now a stale entry. You can fix this by running `quicknotes index`. Original error: {err}; Delete error: {delete_err}");
                     Ok(())
                 }
             }

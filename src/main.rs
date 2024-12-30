@@ -6,13 +6,11 @@ use clap::{Arg, Command as ClapCommand};
 use colored::Colorize;
 use directories::{ProjectDirs, UserDirs};
 use itertools::Itertools;
-use log::LevelFilter;
 use nucleo_picker::nucleo::pattern::CaseMatching;
 use nucleo_picker::{Picker, PickerOptions, Render};
 use quicknotes::{open_note, CommandEditor, NoteConfig, NotePreamble};
 use serde::{Deserialize, Deserializer};
 use serde_derive::{Deserialize, Serialize};
-use simplelog::TermLogger;
 use std::error::Error;
 use std::fmt::Display;
 use std::fs::{self, File};
@@ -81,14 +79,6 @@ impl<T, E: Display> UnwrapOrExit<T> for Result<T, E> {
 }
 
 fn main() {
-    TermLogger::init(
-        LevelFilter::Warn,
-        simplelog::Config::default(),
-        simplelog::TerminalMode::Stderr,
-        simplelog::ColorChoice::Auto,
-    )
-    .unwrap();
-
     let command = cli_command();
     let (note_config, editor) = load_config()
         .unwrap_or_exit("could not load configuration file")

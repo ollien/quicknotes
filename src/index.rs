@@ -1,4 +1,3 @@
-use log::warn;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -10,7 +9,7 @@ use rusqlite::{Connection, Row};
 use rusqlite_migration::{Migrations, M};
 use thiserror::Error;
 
-use crate::note::Preamble;
+use crate::{note::Preamble, warning};
 
 const DB_DATE_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.f";
 
@@ -81,7 +80,7 @@ pub fn all_notes(connection: &mut Connection) -> Result<HashMap<PathBuf, Preambl
             Err(QueryFailure::DatabaseFailure(err)) => Err(err),
             Err(QueryFailure::InvalidRow(msg)) => {
                 // TODO: perhaps we want some kind of read-repair here.
-                warn!("{msg}; skipping entry");
+                warning!("{msg}; skipping entry");
 
                 Ok(None)
             }
