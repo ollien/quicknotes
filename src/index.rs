@@ -14,28 +14,15 @@ use crate::note::Preamble;
 
 const DB_DATE_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.f";
 
-#[derive(Error, Debug)]
-#[error(transparent)]
-pub struct MigrationError(#[from] rusqlite_migration::Error);
-
-#[derive(Error, Debug)]
-#[error(transparent)]
-pub struct LookupError(#[from] rusqlite::Error);
-
-#[derive(Error, Debug)]
-pub enum InsertError {
-    #[error("could not insert into index database: {0}")]
-    DatabaseError(rusqlite::Error),
-
-    #[error("cannot insert a non-utf-8 path to the database: {0}")]
-    BadPath(PathBuf),
-}
-
 pub fn setup_database(connection: &mut Connection) -> Result<(), MigrationError> {
     migrations().to_latest(connection)?;
 
     Ok(())
 }
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub struct MigrationError(#[from] rusqlite_migration::Error);
 
 enum QueryFailure {
     InvalidRow(String),
@@ -76,6 +63,15 @@ pub fn add_note(
         .map_err(InsertError::DatabaseError)
 }
 
+#[derive(Error, Debug)]
+pub enum InsertError {
+    #[error("could not insert into index database: {0}")]
+    DatabaseError(rusqlite::Error),
+
+    #[error("cannot insert a non-utf-8 path to the database: {0}")]
+    BadPath(PathBuf),
+}
+
 pub fn all_notes(connection: &mut Connection) -> Result<HashMap<PathBuf, Preamble>, LookupError> {
     let mut query =
         connection.prepare("SELECT filepath, title, created_at, utc_offset_seconds FROM notes;")?;
@@ -96,6 +92,10 @@ pub fn all_notes(connection: &mut Connection) -> Result<HashMap<PathBuf, Preambl
 
     Ok(notes)
 }
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub struct LookupError(#[from] rusqlite::Error);
 
 fn unpack_row(row: &Row) -> Result<(PathBuf, Preamble), QueryFailure> {
     let raw_filepath: String = row.get(0)?;

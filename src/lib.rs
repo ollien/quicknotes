@@ -25,70 +25,6 @@ mod edit;
 mod index;
 mod note;
 
-#[derive(Error, Debug)]
-pub enum MakeNoteError {
-    #[error("could not create temporary file: {0}")]
-    CreateTempfileError(io::Error),
-
-    #[error("could not write preamble to file: {0}")]
-    PreambleWriteError(io::Error),
-
-    #[error("could not encode preamble to tempfile: {0}")]
-    PreambleEncodeError(SerializeError),
-
-    #[error("could not store note at {destination:?}. It still exists at {src:?}: {err}")]
-    NoteStoreError {
-        src: String,
-        destination: String,
-        #[source]
-        err: io::Error,
-    },
-
-    // This should VERY RARELY happen. There are failsafes to make this as hard as possible.
-    // You can see why at its usage, but tl;dr tempfile can fail to keep the file (on windows)
-    #[error("could not store note. It was unable to be preserved ({keep_error}), and then could not be read for you ({read_error}).")]
-    NoteLostError {
-        #[source]
-        keep_error: io::Error,
-        read_error: io::Error,
-    },
-
-    #[error("could not spawn editor '{editor}': {err}")]
-    EditorSpawnError {
-        editor: String,
-        #[source]
-        err: io::Error,
-    },
-
-    #[error("could not store note at {destination:?} as a file exists with the same name. It still exists at {src:?}")]
-    NoteClobberPreventedError { src: String, destination: String },
-}
-
-#[derive(Error, Debug)]
-pub enum IndexNotesError {
-    #[error("could not open index database: {0}")]
-    OpenError(rusqlite::Error),
-
-    #[error("could not setup index database: {0}")]
-    MigrationError(MigrationError),
-
-    #[error("could not query index database: {0}")]
-    QueryError(LookupError),
-}
-
-#[derive(Error, Debug)]
-#[allow(clippy::enum_variant_names)]
-enum IndexNoteError {
-    #[error("could not open note at {0} for indexing: {1}")]
-    OpenError(PathBuf, #[source] io::Error),
-
-    #[error("could not read preamble from note at {0}: {1}")]
-    PreambleError(PathBuf, #[source] note::InvalidPreambleError),
-
-    #[error("could not index note at {0}: {1}")]
-    IndexError(PathBuf, #[source] index::InsertError),
-}
-
 pub struct NoteConfig {
     pub root_dir: PathBuf,
     pub file_extension: String,
@@ -155,6 +91,45 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
     }
 }
 
+#[derive(Error, Debug)]
+pub enum MakeNoteError {
+    #[error("could not create temporary file: {0}")]
+    CreateTempfileError(io::Error),
+
+    #[error("could not write preamble to file: {0}")]
+    PreambleWriteError(io::Error),
+
+    #[error("could not encode preamble to tempfile: {0}")]
+    PreambleEncodeError(SerializeError),
+
+    #[error("could not store note at {destination:?}. It still exists at {src:?}: {err}")]
+    NoteStoreError {
+        src: String,
+        destination: String,
+        #[source]
+        err: io::Error,
+    },
+
+    // This should VERY RARELY happen. There are failsafes to make this as hard as possible.
+    // You can see why at its usage, but tl;dr tempfile can fail to keep the file (on windows)
+    #[error("could not store note. It was unable to be preserved ({keep_error}), and then could not be read for you ({read_error}).")]
+    NoteLostError {
+        #[source]
+        keep_error: io::Error,
+        read_error: io::Error,
+    },
+
+    #[error("could not spawn editor '{editor}': {err}")]
+    EditorSpawnError {
+        editor: String,
+        #[source]
+        err: io::Error,
+    },
+
+    #[error("could not store note at {destination:?} as a file exists with the same name. It still exists at {src:?}")]
+    NoteClobberPreventedError { src: String, destination: String },
+}
+
 pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
     let mut connection = open_index_database(config)?;
 
@@ -179,10 +154,40 @@ pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
     Ok(())
 }
 
-pub fn indexed_notes(config: &NoteConfig) -> Result<HashMap<PathBuf, Preamble>, IndexNotesError> {
+#[derive(Error, Debug)]
+pub enum IndexNotesError {
+    #[error("could not open index database: {0}")]
+    OpenError(rusqlite::Error),
+
+    #[error("could not setup index database: {0}")]
+    MigrationError(MigrationError),
+}
+
+pub fn indexed_notes(config: &NoteConfig) -> Result<HashMap<PathBuf, Preamble>, IndexedNotesError> {
     let mut connection = open_index_database(config)?;
 
-    index::all_notes(&mut connection).map_err(IndexNotesError::QueryError)
+    index::all_notes(&mut connection).map_err(IndexedNotesError::QueryError)
+}
+
+#[derive(Error, Debug)]
+pub enum IndexedNotesError {
+    #[error("could not open index database: {0}")]
+    OpenError(rusqlite::Error),
+
+    #[error("could not setup index database: {0}")]
+    MigrationError(MigrationError),
+
+    #[error("could not query index database: {0}")]
+    QueryError(LookupError),
+}
+
+impl From<IndexNotesError> for IndexedNotesError {
+    fn from(err: IndexNotesError) -> Self {
+        match err {
+            IndexNotesError::OpenError(err) => Self::OpenError(err),
+            IndexNotesError::MigrationError(err) => Self::MigrationError(err),
+        }
+    }
 }
 
 fn open_index_database(config: &NoteConfig) -> Result<Connection, IndexNotesError> {
@@ -224,6 +229,19 @@ fn index_note(index_connection: &mut Connection, entry: &DirEntry) -> Result<(),
 
     index::add_note(index_connection, &preamble, entry.path())
         .map_err(|err| IndexNoteError::IndexError(entry.path().to_owned(), err))
+}
+
+#[derive(Error, Debug)]
+#[allow(clippy::enum_variant_names)]
+enum IndexNoteError {
+    #[error("could not open note at {0} for indexing: {1}")]
+    OpenError(PathBuf, #[source] io::Error),
+
+    #[error("could not read preamble from note at {0}: {1}")]
+    PreambleError(PathBuf, #[source] note::InvalidPreambleError),
+
+    #[error("could not index note at {0}: {1}")]
+    IndexError(PathBuf, #[source] index::InsertError),
 }
 
 fn make_note_at<E: Editor, Tz: TimeZone>(

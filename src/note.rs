@@ -19,25 +19,6 @@ pub struct Preamble {
     pub created_at: DateTime<FixedOffset>,
 }
 
-#[derive(Error, Debug)]
-#[error(transparent)]
-pub struct SerializeError(toml::ser::Error);
-
-#[derive(Error, Debug)]
-pub enum InvalidPreambleError {
-    #[error("preamble did not terminate")]
-    UnterminatedFence(),
-
-    #[error("'{0}' is not a valid fence")]
-    MalformedFence(String),
-
-    #[error("{0}")]
-    DeserializeError(toml::de::Error),
-
-    #[error(transparent)]
-    IOError(io::Error),
-}
-
 impl Preamble {
     pub fn serialize(&self) -> Result<String, SerializeError> {
         let toml_preamble = toml::to_string_pretty(self).map_err(SerializeError)?;
@@ -46,6 +27,10 @@ impl Preamble {
         Ok(serialized)
     }
 }
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub struct SerializeError(toml::ser::Error);
 
 impl Preamble {
     #[must_use]
@@ -74,6 +59,21 @@ pub fn extract_preamble<R: Read>(reader: R) -> Result<Preamble, InvalidPreambleE
     let toml = read_until_closing_fence(&mut buffered_reader)?;
 
     toml::from_str(&toml).map_err(InvalidPreambleError::DeserializeError)
+}
+
+#[derive(Error, Debug)]
+pub enum InvalidPreambleError {
+    #[error("preamble did not terminate")]
+    UnterminatedFence(),
+
+    #[error("'{0}' is not a valid fence")]
+    MalformedFence(String),
+
+    #[error("{0}")]
+    DeserializeError(toml::de::Error),
+
+    #[error(transparent)]
+    IOError(io::Error),
 }
 
 fn ensure_preamble_fence<R: BufRead>(mut reader: R) -> Result<(), InvalidPreambleError> {
