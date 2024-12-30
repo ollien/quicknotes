@@ -436,8 +436,27 @@ fn open_note_in_editor<E: Editor>(
     path: &Path,
 ) -> Result<(), OpenNoteInEditorError> {
     open_in_editor(editor, path)?;
+
     let mut index_connection = open_index_database(config)?;
-    index_note(&mut index_connection, path)?;
+
+    index_note(&mut index_connection, path)
+        .or_else(|err| {
+            let IndexNoteError::PreambleError(_path, err) = err else {
+                return Err(err)
+            };
+
+            match index::delete_note(&mut index_connection, path) {
+                Ok(()) => {
+                    warn!("After editing, the note could not be reindexed. It has been removed from the index. Original error: {err}");
+                    Ok(())
+                }
+
+                Err(delete_err) => {
+                    warn!("After editing, the note could not be reindexed. There was a subsequent failure that prevented it from being removed from the index, so there is now a stale entry. You can fix this by running `quicknotes index`. Original error: {err}; Delete error: {delete_err}");
+                    Ok(())
+                }
+            }
+        })?;
 
     Ok(())
 }

@@ -69,11 +69,13 @@ impl Editor for OverwriteEditor {
         if let Some(to_insert) = self.to_insert.as_ref() {
             let mut file = OpenOptions::new()
                 .write(true)
+                .truncate(true)
                 .open(path)
                 .expect("could not open note file for editing");
 
             write!(file, "{to_insert}")?;
         }
+
         Ok(())
     }
 }

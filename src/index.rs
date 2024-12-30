@@ -97,6 +97,26 @@ pub fn all_notes(connection: &mut Connection) -> Result<HashMap<PathBuf, Preambl
 #[error(transparent)]
 pub struct LookupError(#[from] rusqlite::Error);
 
+pub fn delete_note(connection: &mut Connection, path: &Path) -> Result<(), DeleteError> {
+    let path_string = path
+        .to_str()
+        .ok_or_else(|| DeleteError::BadPath(path.to_owned()))?;
+
+    connection
+        .execute("DELETE FROM notes WHERE filepath = ?;", (&path_string,))
+        .map(|_affected| ())
+        .map_err(DeleteError::DatabaseError)
+}
+
+#[derive(Error, Debug)]
+pub enum DeleteError {
+    #[error("could not delete from index database: {0}")]
+    DatabaseError(rusqlite::Error),
+
+    #[error("cannot delete a non-utf-8 path from the database: {0}")]
+    BadPath(PathBuf),
+}
+
 fn unpack_row(row: &Row) -> Result<(PathBuf, Preamble), QueryFailure> {
     let raw_filepath: String = row.get(0)?;
     let title: String = row.get(1)?;
@@ -372,5 +392,54 @@ mod tests {
                 valid_note_preamble
             )]
         );
+    }
+
+    #[test]
+    pub fn delete_note_is_idempotent() {
+        let mut connection = Connection::open_in_memory().expect("could not open test database");
+        setup_database(&mut connection).expect("could not setup test database");
+
+        // if this is ok, the test passes
+        delete_note(&mut connection, Path::new("/does/not/exist")).expect("could not delete note");
+    }
+
+    #[test]
+    pub fn delete_note_removes_notes_from_database() {
+        let mut connection = Connection::open_in_memory().expect("could not open test database");
+        setup_database(&mut connection).expect("could not setup test database");
+
+        connection
+            .execute(
+                r#"INSERT INTO notes VALUES (
+                    "/home/ferris/Documents/quicknotes/notes/my-cool-note.txt",
+                    "Hello, world!",
+                    "2015-10-22T07:28:00.000",
+                    0
+                )"#,
+                [],
+            )
+            .unwrap();
+
+        let notes = all_notes(&mut connection)
+            .expect("Failed to query notes")
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        // Prove the note is there
+        assert!(!notes.is_empty());
+
+        delete_note(
+            &mut connection,
+            Path::new("/home/ferris/Documents/quicknotes/notes/my-cool-note.txt"),
+        )
+        .expect("could not delete note");
+
+        let notes = all_notes(&mut connection)
+            .expect("Failed to query notes")
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        // Prove the note is now gone
+        assert!(notes.is_empty());
     }
 }
