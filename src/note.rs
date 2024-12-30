@@ -25,13 +25,13 @@ pub struct SerializeError(toml::ser::Error);
 
 #[derive(Error, Debug)]
 pub enum InvalidPreambleError {
-    #[error("Malformed preamble: preamble did not terminate")]
+    #[error("preamble did not terminate")]
     UnterminatedFence(),
 
-    #[error("Malformed preamble: '{0}' is not a valid fence")]
+    #[error("'{0}' is not a valid fence")]
     MalformedFence(String),
 
-    #[error("Malformed preamble: {0}")]
+    #[error("{0}")]
     DeserializeError(toml::de::Error),
 
     #[error(transparent)]
@@ -48,6 +48,7 @@ impl Preamble {
 }
 
 impl Preamble {
+    #[must_use]
     pub fn new(title: String, created_at: DateTime<FixedOffset>) -> Self {
         Self { title, created_at }
     }

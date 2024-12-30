@@ -6,18 +6,29 @@ use clap::{Arg, Command as ClapCommand};
 use colored::Colorize;
 use directories::{ProjectDirs, UserDirs};
 use itertools::Itertools;
-use quicknotes::{CommandEditor, NoteConfig};
+use log::LevelFilter;
+use quicknotes::{CommandEditor, Editor, NoteConfig, NotePreamble};
 use serde::{Deserialize, Deserializer};
 use serde_derive::{Deserialize, Serialize};
+use simplelog::TermLogger;
+use skim::prelude::SkimOptionsBuilder;
+use skim::{Skim, SkimItem};
+use std::borrow::Cow;
 use std::fmt::Display;
-use std::fs;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::{env, process};
+use std::{fs, thread};
 
 trait UnwrapOrExit<T> {
     fn unwrap_or_exit(self, msg: &str) -> T;
+}
+
+struct IndexedNote {
+    path: PathBuf,
+    preamble: NotePreamble,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -29,6 +40,12 @@ struct OnDiskConfig {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub editor_command: Option<String>,
+}
+
+impl SkimItem for IndexedNote {
+    fn text(&self) -> std::borrow::Cow<str> {
+        Cow::Borrowed(&self.preamble.title)
+    }
 }
 
 impl OnDiskConfig {
@@ -62,6 +79,14 @@ impl<T, E: Display> UnwrapOrExit<T> for Result<T, E> {
 }
 
 fn main() {
+    TermLogger::init(
+        LevelFilter::Warn,
+        simplelog::Config::default(),
+        simplelog::TerminalMode::Stderr,
+        simplelog::ColorChoice::Auto,
+    )
+    .unwrap();
+
     let command = cli_command();
     let (note_config, editor) = load_config()
         .unwrap_or_exit("could not load configuration file")
@@ -70,6 +95,8 @@ fn main() {
     match command.get_matches().subcommand() {
         Some(("new", submatches)) => run_new(&note_config, &editor, submatches),
         Some(("daily", _submatches)) => run_daily(&note_config, &editor),
+        Some(("index", _submatches)) => run_index(&note_config),
+        Some(("open", _submatches)) => run_open(&note_config, &editor),
         _ => unreachable!(),
     }
 }
@@ -80,6 +107,8 @@ fn cli_command() -> ClapCommand {
         .arg_required_else_help(true)
         .subcommand(ClapCommand::new("new").arg(Arg::new("title").num_args(1..).required(true)))
         .subcommand(ClapCommand::new("daily"))
+        .subcommand(ClapCommand::new("index"))
+        .subcommand(ClapCommand::new("open"))
 }
 
 fn run_new(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches) {
@@ -98,6 +127,57 @@ fn run_daily(config: &NoteConfig, editor: &CommandEditor) {
     ensure_daily_dir_exists(config).unwrap_or_exit("could not create dailies directory");
     quicknotes::make_or_open_daily(config, editor, &Local::now())
         .unwrap_or_exit("could not create daily note");
+}
+
+fn run_index(config: &NoteConfig) {
+    ensure_root_dir_exists(config).unwrap_or_exit("could not create root quicknotes directory");
+    quicknotes::index_notes(config).unwrap_or_exit("could not index notes");
+}
+
+fn run_open(config: &NoteConfig, editor: &CommandEditor) {
+    ensure_root_dir_exists(config).unwrap_or_exit("could not create root quicknotes directory");
+
+    let indexed_notes = quicknotes::indexed_notes(config).unwrap_or_exit("couldn't load notes");
+    let (notes_tx, notes_rx) = skim::prelude::unbounded();
+
+    // Move the unpacking of the indexed notes into another thread so skim can start quickly
+    thread::spawn(move || {
+        indexed_notes
+            .into_iter()
+            .map(|(path, preamble)| Arc::new(IndexedNote { path, preamble }) as Arc<dyn SkimItem>)
+            .for_each(|note| {
+                // send can fail only when there's nothing to receive the data. If this happens,
+                // that's fine, because that means skim isn't going to display the data anyway.
+                //
+                // https://docs.rs/crossbeam/latest/crossbeam/channel/struct.SendError.html
+                let _ = notes_tx.send(note);
+            });
+    });
+
+    let options = SkimOptionsBuilder::default()
+        .no_info(true)
+        .no_multi(true)
+        .build()
+        .unwrap();
+
+    let res = Skim::run_with(&options, Some(notes_rx)).unwrap();
+    if res.is_abort {
+        return;
+    }
+
+    let Some(selected) = res.selected_items.first() else {
+        return;
+    };
+
+    let selected_path = &selected
+        .as_any()
+        .downcast_ref::<IndexedNote>()
+        .expect("note was not expected type of IndexedNote")
+        .path;
+
+    editor
+        .edit(selected_path)
+        .unwrap_or_exit("could not open selected file");
 }
 
 fn load_config() -> anyhow::Result<OnDiskConfig> {
@@ -166,6 +246,10 @@ fn ensure_notes_dir_exists(config: &NoteConfig) -> anyhow::Result<()> {
 
 fn ensure_daily_dir_exists(config: &NoteConfig) -> anyhow::Result<()> {
     ensure_directory_exists(&config.daily_directory_path())
+}
+
+fn ensure_root_dir_exists(config: &NoteConfig) -> anyhow::Result<()> {
+    ensure_directory_exists(&config.root_dir)
 }
 
 fn ensure_directory_exists(path: &Path) -> anyhow::Result<()> {

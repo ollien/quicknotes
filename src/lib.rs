@@ -2,8 +2,13 @@
 #![allow(clippy::missing_errors_doc)]
 
 use chrono::{DateTime, TimeZone};
+use index::{IndexError, MigrationError};
 use io::Write;
+use log::warn;
 use note::{Preamble, SerializeError};
+use rusqlite::Connection;
+use std::collections::HashMap;
+use std::fs::File;
 use std::io;
 use std::{
     fs::{self, OpenOptions},
@@ -11,10 +16,13 @@ use std::{
 };
 use tempfile::{Builder as TempFileBuilder, NamedTempFile};
 use thiserror::Error;
+use walkdir::{DirEntry, WalkDir};
 
 pub use edit::{CommandEditor, Editor};
+pub use note::Preamble as NotePreamble;
 
 mod edit;
+mod index;
 mod note;
 
 #[derive(Error, Debug)]
@@ -56,6 +64,31 @@ pub enum MakeNoteError {
     NoteClobberPreventedError { src: String, destination: String },
 }
 
+#[derive(Error, Debug)]
+pub enum IndexNotesError {
+    #[error("could not open index database: {0}")]
+    OpenError(rusqlite::Error),
+
+    #[error("could not setup index database: {0}")]
+    MigrationError(MigrationError),
+
+    #[error("could not query index database: {0}")]
+    QueryError(IndexError),
+}
+
+#[derive(Error, Debug)]
+#[allow(clippy::enum_variant_names)]
+enum IndexNoteError {
+    #[error("could not open note at {0} for indexing: {1}")]
+    OpenError(PathBuf, #[source] io::Error),
+
+    #[error("could not read preamble from note at {0}: {1}")]
+    PreambleError(PathBuf, #[source] note::InvalidPreambleError),
+
+    #[error("could not index note at {0}: {1}")]
+    IndexError(PathBuf, #[source] index::InsertError),
+}
+
 pub struct NoteConfig {
     pub root_dir: PathBuf,
     pub file_extension: String,
@@ -71,6 +104,11 @@ impl NoteConfig {
     #[must_use]
     pub fn daily_directory_path(&self) -> PathBuf {
         self.root_dir.join(Path::new("daily"))
+    }
+
+    #[must_use]
+    pub fn index_db_path(&self) -> PathBuf {
+        self.root_dir.join(Path::new(".index.sqlite3"))
     }
 }
 
@@ -115,6 +153,77 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
             &destination_path,
         )
     }
+}
+
+pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
+    let mut connection = open_index_database(config)?;
+
+    let file_iterator = WalkDir::new(config.notes_directory_path())
+        .into_iter()
+        .chain(WalkDir::new(config.daily_directory_path()));
+
+    for entry_res in file_iterator {
+        let Ok(entry) = unpack_walkdir_entry_result(entry_res) else {
+            continue;
+        };
+
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        if let Err(err) = index_note(&mut connection, &entry) {
+            warn!("{}", err);
+        }
+    }
+
+    Ok(())
+}
+
+pub fn indexed_notes(config: &NoteConfig) -> Result<HashMap<PathBuf, Preamble>, IndexNotesError> {
+    let mut connection = open_index_database(config)?;
+
+    index::all_notes(&mut connection).map_err(IndexNotesError::QueryError)
+}
+
+fn open_index_database(config: &NoteConfig) -> Result<Connection, IndexNotesError> {
+    let mut connection =
+        Connection::open(config.index_db_path()).map_err(IndexNotesError::OpenError)?;
+
+    index::setup_database(&mut connection).map_err(IndexNotesError::MigrationError)?;
+
+    Ok(connection)
+}
+
+fn unpack_walkdir_entry_result(
+    entry_res: Result<DirEntry, walkdir::Error>,
+) -> Result<DirEntry, ()> {
+    match entry_res {
+        Ok(entry) => Ok(entry),
+        Err(err) => {
+            if let Some(path) = err.path() {
+                warn!(
+                    "Cannot traverse {}: {}",
+                    path.display().to_string(),
+                    io::Error::from(err)
+                );
+            } else {
+                warn!("Cannot traverse notes: {}", io::Error::from(err));
+            }
+
+            Err(())
+        }
+    }
+}
+
+fn index_note(index_connection: &mut Connection, entry: &DirEntry) -> Result<(), IndexNoteError> {
+    let mut file = File::open(entry.path())
+        .map_err(|err| IndexNoteError::OpenError(entry.path().to_owned(), err))?;
+
+    let preamble = note::extract_preamble(&mut file)
+        .map_err(|err| IndexNoteError::PreambleError(entry.path().to_owned(), err))?;
+
+    index::add_note(index_connection, &preamble, entry.path())
+        .map_err(|err| IndexNoteError::IndexError(entry.path().to_owned(), err))
 }
 
 fn make_note_at<E: Editor, Tz: TimeZone>(
