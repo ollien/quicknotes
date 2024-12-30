@@ -9,7 +9,7 @@ use itertools::Itertools;
 use log::LevelFilter;
 use nucleo_picker::nucleo::pattern::CaseMatching;
 use nucleo_picker::{Picker, PickerOptions, Render};
-use quicknotes::{CommandEditor, Editor, NoteConfig, NotePreamble};
+use quicknotes::{open_note, CommandEditor, NoteConfig, NotePreamble};
 use serde::{Deserialize, Deserializer};
 use serde_derive::{Deserialize, Serialize};
 use simplelog::TermLogger;
@@ -165,8 +165,7 @@ fn run_open(config: &NoteConfig, editor: &CommandEditor) {
         });
 
     if let Some(selected_note) = pick(&mut picker).unwrap_or_exit("could not launch picker") {
-        editor
-            .edit(&selected_note.path)
+        open_note(config, editor, &selected_note.path)
             .unwrap_or_exit("could not open selected file");
     }
 }

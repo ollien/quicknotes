@@ -31,6 +31,14 @@ pub struct NoteConfig {
     pub temp_root_override: Option<PathBuf>,
 }
 
+#[derive(Error, Debug)]
+#[error("could not spawn editor '{editor}': {err}")]
+pub struct EditorSpawnError {
+    editor: String,
+    #[source]
+    err: io::Error,
+}
+
 impl NoteConfig {
     #[must_use]
     pub fn notes_directory_path(&self) -> PathBuf {
@@ -67,17 +75,21 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
 ) -> Result<(), MakeNoteError> {
     let filename = note::filename_for_date(creation_time.date_naive(), &config.file_extension);
     let destination_path = config.daily_directory_path().join(filename);
-    let destination_exists = fs::metadata(&destination_path)
-        .map(|metadata| metadata.is_file())
-        .unwrap_or(false);
+    let destination_exists = ensure_note_exists(&destination_path)
+        .map(|()| true)
+        .or_else(|err| {
+            if err.kind() == io::ErrorKind::NotFound {
+                Ok(false)
+            } else {
+                Err(MakeNoteError::NoteLookupError {
+                    destination: destination_path.display().to_string(),
+                    err,
+                })
+            }
+        })?;
 
     if destination_exists {
-        editor
-            .edit(&destination_path)
-            .map_err(|err| MakeNoteError::EditorSpawnError {
-                editor: editor.name().to_owned(),
-                err,
-            })?;
+        open_note_in_editor(editor, &destination_path)?;
 
         Ok(())
     } else {
@@ -110,6 +122,13 @@ pub enum MakeNoteError {
         err: io::Error,
     },
 
+    #[error("could not check if note exists at {destination:?}: {err}")]
+    NoteLookupError {
+        destination: String,
+        #[source]
+        err: io::Error,
+    },
+
     // This should VERY RARELY happen. There are failsafes to make this as hard as possible.
     // You can see why at its usage, but tl;dr tempfile can fail to keep the file (on windows)
     #[error("could not store note. It was unable to be preserved ({keep_error}), and then could not be read for you ({read_error}).")]
@@ -119,15 +138,47 @@ pub enum MakeNoteError {
         read_error: io::Error,
     },
 
-    #[error("could not spawn editor '{editor}': {err}")]
-    EditorSpawnError {
-        editor: String,
-        #[source]
-        err: io::Error,
-    },
+    #[error(transparent)]
+    EditorSpawnError(EditorSpawnError),
 
     #[error("could not store note at {destination:?} as a file exists with the same name. It still exists at {src:?}")]
     NoteClobberPreventedError { src: String, destination: String },
+}
+
+impl From<OpenNoteInEditorError> for MakeNoteError {
+    fn from(err: OpenNoteInEditorError) -> Self {
+        match err {
+            OpenNoteInEditorError::EditorSpawnError(err) => MakeNoteError::EditorSpawnError(err),
+        }
+    }
+}
+
+pub fn open_note<E: Editor>(
+    config: &NoteConfig,
+    editor: E,
+    path: &Path,
+) -> Result<(), OpenNoteError> {
+    ensure_note_exists(path).map_err(OpenNoteError::LookupError)?;
+    open_note_in_editor(editor, path)?;
+
+    Ok(())
+}
+
+#[derive(Error, Debug)]
+pub enum OpenNoteError {
+    #[error(transparent)]
+    LookupError(io::Error),
+
+    #[error(transparent)]
+    EditorSpawnError(EditorSpawnError),
+}
+
+impl From<OpenNoteInEditorError> for OpenNoteError {
+    fn from(err: OpenNoteInEditorError) -> Self {
+        match err {
+            OpenNoteInEditorError::EditorSpawnError(err) => OpenNoteError::EditorSpawnError(err),
+        }
+    }
 }
 
 pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
@@ -255,14 +306,7 @@ fn make_note_at<E: Editor, Tz: TimeZone>(
     let preamble = Preamble::new(title, creation_time.fixed_offset());
 
     write_preamble(&preamble, tempfile.path())?;
-
-    editor
-        .edit(tempfile.path())
-        .map_err(|err| MakeNoteError::EditorSpawnError {
-            editor: editor.name().to_owned(),
-            err,
-        })?;
-
+    open_note_in_editor(editor, tempfile.path())?;
     store_note(tempfile, destination_path)
 }
 
@@ -349,4 +393,32 @@ fn write_preamble(preamble: &Preamble, path: &Path) -> Result<(), MakeNoteError>
         .map_err(MakeNoteError::PreambleEncodeError)?;
 
     write!(file, "{serialized_preamble}\n\n").map_err(MakeNoteError::PreambleWriteError)
+}
+
+fn ensure_note_exists(path: &Path) -> Result<(), io::Error> {
+    fs::metadata(path).and_then(|metadata| {
+        if metadata.is_dir() {
+            Err(io::Error::new(
+                io::ErrorKind::IsADirectory,
+                "file is a directory",
+            ))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+fn open_note_in_editor<E: Editor>(editor: E, path: &Path) -> Result<(), OpenNoteInEditorError> {
+    editor.edit(path).map_err(|err| {
+        OpenNoteInEditorError::EditorSpawnError(EditorSpawnError {
+            editor: editor.name().to_owned(),
+            err,
+        })
+    })
+}
+
+#[derive(Error, Debug)]
+enum OpenNoteInEditorError {
+    #[error(transparent)]
+    EditorSpawnError(EditorSpawnError),
 }
