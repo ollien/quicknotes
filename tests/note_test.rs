@@ -1,10 +1,8 @@
-use std::{
-    fs::{self, OpenOptions},
-    io::Write,
-};
+use std::fs;
 
 use chrono::{DateTime, FixedOffset, TimeZone};
-use quicknotes::{Editor, NoteConfig};
+use quicknotes::NoteConfig;
+use testutil::AppendEditor;
 
 mod testutil;
 
@@ -16,39 +14,6 @@ fn test_time() -> DateTime<FixedOffset> {
         .unwrap()
 }
 
-#[derive(Default)]
-struct TestEditor {
-    to_insert: Option<String>,
-}
-
-impl TestEditor {
-    fn new() -> Self {
-        TestEditor::default()
-    }
-
-    fn note_contents(&mut self, contents: String) {
-        self.to_insert = Some(contents);
-    }
-}
-
-impl Editor for TestEditor {
-    fn name(&self) -> &str {
-        "test_dir"
-    }
-
-    fn edit(&self, path: &std::path::Path) -> std::io::Result<()> {
-        if let Some(to_insert) = self.to_insert.as_ref() {
-            let mut file = OpenOptions::new()
-                .append(true)
-                .open(path)
-                .expect("could not open note file for editing");
-
-            write!(file, "{to_insert}")?;
-        }
-        Ok(())
-    }
-}
-
 #[test]
 fn writes_notes_to_notes_directory() {
     let roots = testutil::setup_filesystem();
@@ -58,7 +23,7 @@ fn writes_notes_to_notes_directory() {
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };
 
-    let mut editor = TestEditor::new();
+    let mut editor = AppendEditor::new();
     editor.note_contents("hello, world!\n".to_string());
 
     quicknotes::make_note(&config, editor, "my cool note".to_string(), &test_time())
@@ -79,7 +44,7 @@ fn writes_dailies_to_notes_directory() {
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };
 
-    let mut editor = TestEditor::new();
+    let mut editor = AppendEditor::new();
     editor.note_contents("today was a cool day\n".to_string());
 
     quicknotes::make_or_open_daily(&config, editor, &test_time()).expect("could not write note");
@@ -100,7 +65,7 @@ fn editing_an_existing_daily_alters_the_same_file() {
     };
 
     let datetime = test_time();
-    let mut editor = TestEditor::new();
+    let mut editor = AppendEditor::new();
 
     editor.note_contents("today was a cool day\n".to_string());
     quicknotes::make_or_open_daily(&config, &editor, &datetime).expect("could not write note");

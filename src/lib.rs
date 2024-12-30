@@ -31,14 +31,6 @@ pub struct NoteConfig {
     pub temp_root_override: Option<PathBuf>,
 }
 
-#[derive(Error, Debug)]
-#[error("could not spawn editor '{editor}': {err}")]
-pub struct EditorSpawnError {
-    editor: String,
-    #[source]
-    err: io::Error,
-}
-
 impl NoteConfig {
     #[must_use]
     pub fn notes_directory_path(&self) -> PathBuf {
@@ -89,7 +81,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
         })?;
 
     if destination_exists {
-        open_note_in_editor(editor, &destination_path)?;
+        open_note_in_editor(config, editor, &destination_path)?;
 
         Ok(())
     } else {
@@ -139,16 +131,45 @@ pub enum MakeNoteError {
     },
 
     #[error(transparent)]
-    EditorSpawnError(EditorSpawnError),
+    EditorSpawnError(#[from] EditorSpawnError),
+
+    #[error(transparent)]
+    IndexOpenError(#[from] IndexOpenError),
+
+    #[error(transparent)]
+    IndexNoteError(#[from] IndexNoteError),
 
     #[error("could not store note at {destination:?} as a file exists with the same name. It still exists at {src:?}")]
     NoteClobberPreventedError { src: String, destination: String },
+}
+
+#[derive(Error, Debug)]
+#[allow(clippy::enum_variant_names)]
+pub enum IndexNoteError {
+    #[error("could not open note at {0} for indexing: {1}")]
+    OpenError(PathBuf, #[source] io::Error),
+
+    #[error("could not read preamble from note at {0}: {1}")]
+    PreambleError(PathBuf, #[source] note::InvalidPreambleError),
+
+    #[error("could not index note at {0}: {1}")]
+    IndexError(PathBuf, #[source] index::InsertError),
+}
+
+#[derive(Error, Debug)]
+#[error("could not spawn editor '{editor}': {err}")]
+pub struct EditorSpawnError {
+    editor: String,
+    #[source]
+    err: io::Error,
 }
 
 impl From<OpenNoteInEditorError> for MakeNoteError {
     fn from(err: OpenNoteInEditorError) -> Self {
         match err {
             OpenNoteInEditorError::EditorSpawnError(err) => MakeNoteError::EditorSpawnError(err),
+            OpenNoteInEditorError::IndexOpenError(err) => MakeNoteError::IndexOpenError(err),
+            OpenNoteInEditorError::IndexNoteError(err) => MakeNoteError::IndexNoteError(err),
         }
     }
 }
@@ -159,7 +180,7 @@ pub fn open_note<E: Editor>(
     path: &Path,
 ) -> Result<(), OpenNoteError> {
     ensure_note_exists(path).map_err(OpenNoteError::LookupError)?;
-    open_note_in_editor(editor, path)?;
+    open_note_in_editor(config, editor, path)?;
 
     Ok(())
 }
@@ -171,12 +192,20 @@ pub enum OpenNoteError {
 
     #[error(transparent)]
     EditorSpawnError(EditorSpawnError),
+
+    #[error(transparent)]
+    IndexOpenError(IndexOpenError),
+
+    #[error(transparent)]
+    IndexNoteError(IndexNoteError),
 }
 
 impl From<OpenNoteInEditorError> for OpenNoteError {
     fn from(err: OpenNoteInEditorError) -> Self {
         match err {
             OpenNoteInEditorError::EditorSpawnError(err) => OpenNoteError::EditorSpawnError(err),
+            OpenNoteInEditorError::IndexOpenError(err) => OpenNoteError::IndexOpenError(err),
+            OpenNoteInEditorError::IndexNoteError(err) => OpenNoteError::IndexNoteError(err),
         }
     }
 }
@@ -201,7 +230,7 @@ pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
             continue;
         }
 
-        if let Err(err) = index_note(&mut connection, &entry) {
+        if let Err(err) = index_note(&mut connection, entry.path()) {
             warn!("{}", err);
         }
     }
@@ -272,28 +301,15 @@ fn unpack_walkdir_entry_result(
     }
 }
 
-fn index_note(index_connection: &mut Connection, entry: &DirEntry) -> Result<(), IndexNoteError> {
-    let mut file = File::open(entry.path())
-        .map_err(|err| IndexNoteError::OpenError(entry.path().to_owned(), err))?;
+fn index_note(index_connection: &mut Connection, path: &Path) -> Result<(), IndexNoteError> {
+    let mut file =
+        File::open(path).map_err(|err| IndexNoteError::OpenError(path.to_owned(), err))?;
 
     let preamble = note::extract_preamble(&mut file)
-        .map_err(|err| IndexNoteError::PreambleError(entry.path().to_owned(), err))?;
+        .map_err(|err| IndexNoteError::PreambleError(path.to_owned(), err))?;
 
-    index::add_note(index_connection, &preamble, entry.path())
-        .map_err(|err| IndexNoteError::IndexError(entry.path().to_owned(), err))
-}
-
-#[derive(Error, Debug)]
-#[allow(clippy::enum_variant_names)]
-enum IndexNoteError {
-    #[error("could not open note at {0} for indexing: {1}")]
-    OpenError(PathBuf, #[source] io::Error),
-
-    #[error("could not read preamble from note at {0}: {1}")]
-    PreambleError(PathBuf, #[source] note::InvalidPreambleError),
-
-    #[error("could not index note at {0}: {1}")]
-    IndexError(PathBuf, #[source] index::InsertError),
+    index::add_note(index_connection, &preamble, path)
+        .map_err(|err| IndexNoteError::IndexError(path.to_owned(), err))
 }
 
 fn make_note_at<E: Editor, Tz: TimeZone>(
@@ -307,8 +323,13 @@ fn make_note_at<E: Editor, Tz: TimeZone>(
     let preamble = Preamble::new(title, creation_time.fixed_offset());
 
     write_preamble(&preamble, tempfile.path())?;
-    open_note_in_editor(editor, tempfile.path())?;
-    store_note(tempfile, destination_path)
+    open_in_editor(editor, tempfile.path())?;
+    store_note(tempfile, destination_path)?;
+
+    let mut index_connection = open_index_database(config)?;
+    index_note(&mut index_connection, destination_path)?;
+
+    Ok(())
 }
 
 fn store_note(tempfile: NamedTempFile, destination: &Path) -> Result<(), MakeNoteError> {
@@ -409,19 +430,36 @@ fn ensure_note_exists(path: &Path) -> Result<(), io::Error> {
     })
 }
 
-fn open_note_in_editor<E: Editor>(editor: E, path: &Path) -> Result<(), OpenNoteInEditorError> {
-    editor.edit(path).map_err(|err| {
-        OpenNoteInEditorError::EditorSpawnError(EditorSpawnError {
-            editor: editor.name().to_owned(),
-            err,
-        })
-    })
+fn open_note_in_editor<E: Editor>(
+    config: &NoteConfig,
+    editor: E,
+    path: &Path,
+) -> Result<(), OpenNoteInEditorError> {
+    open_in_editor(editor, path)?;
+    let mut index_connection = open_index_database(config)?;
+    index_note(&mut index_connection, path)?;
+
+    Ok(())
 }
 
 #[derive(Error, Debug)]
+#[allow(clippy::enum_variant_names)]
 enum OpenNoteInEditorError {
     #[error(transparent)]
-    EditorSpawnError(EditorSpawnError),
+    EditorSpawnError(#[from] EditorSpawnError),
+
+    #[error(transparent)]
+    IndexOpenError(#[from] IndexOpenError),
+
+    #[error(transparent)]
+    IndexNoteError(#[from] IndexNoteError),
+}
+
+fn open_in_editor<E: Editor>(editor: E, path: &Path) -> Result<(), EditorSpawnError> {
+    editor.edit(path).map_err(|err| EditorSpawnError {
+        editor: editor.name().to_owned(),
+        err,
+    })
 }
 
 fn truncate_index_database(config: &NoteConfig) -> Result<(), io::Error> {
