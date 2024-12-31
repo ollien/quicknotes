@@ -2,7 +2,7 @@
 #![allow(clippy::missing_errors_doc)]
 
 use chrono::{DateTime, TimeZone};
-use index::{LookupError, MigrationError};
+use index::{LookupError as IndexLookupError, OpenError as IndexOpenError};
 use io::Write;
 use note::{Preamble, SerializeError};
 use rusqlite::Connection;
@@ -223,29 +223,13 @@ impl From<OpenNoteInEditorError> for OpenNoteError {
 pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
     // This is a bit of a hack, but is easier than trying to prune stale entries from
     // the index
-    truncate_index_database(config).map_err(IndexNotesError::TruncateError)?;
+    reset_index_database(config)?;
 
-    let mut connection = open_index_database(config).map_err(IndexNotesError::IndexOpenError)?;
+    let mut connection = open_index_database(config)?;
 
-    let file_iterator = WalkDir::new(config.notes_directory_path())
-        .into_iter()
-        .chain(WalkDir::new(config.daily_directory_path()));
-
-    for entry_res in file_iterator {
-        let Ok(entry) = unpack_walkdir_entry_result(entry_res) else {
-            continue;
-        };
-
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
-        if let Err(err) = index_note(&mut connection, entry.path()) {
-            warning!(
-                "could not index note at {}: {}",
-                entry.path().display(),
-                err
-            );
+    for path in note_file_paths(config) {
+        if let Err(err) = index_note(&mut connection, &path) {
+            warning!("could not index note at {}: {}", path.display(), err);
         }
     }
 
@@ -254,20 +238,11 @@ pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
 
 #[derive(Error, Debug)]
 pub enum IndexNotesError {
-    #[error("could not truncate old index database: {0}")]
-    TruncateError(io::Error),
+    #[error(transparent)]
+    IndexResetError(#[from] index::ResetError),
 
     #[error(transparent)]
-    IndexOpenError(IndexOpenError),
-}
-
-#[derive(Error, Debug)]
-pub enum IndexOpenError {
-    #[error("could not open index database: {0}")]
-    ConnectionOpenError(rusqlite::Error),
-
-    #[error("could not setup index database: {0}")]
-    MigrationError(MigrationError),
+    IndexOpenError(#[from] IndexOpenError),
 }
 
 pub fn indexed_notes(config: &NoteConfig) -> Result<HashMap<PathBuf, Preamble>, IndexedNotesError> {
@@ -282,44 +257,7 @@ pub enum IndexedNotesError {
     IndexOpenError(IndexOpenError),
 
     #[error("could not query index database: {0}")]
-    QueryError(LookupError),
-}
-
-fn open_index_database(config: &NoteConfig) -> Result<Connection, IndexOpenError> {
-    let mut connection =
-        Connection::open(config.index_db_path()).map_err(IndexOpenError::ConnectionOpenError)?;
-
-    index::setup_database(&mut connection).map_err(IndexOpenError::MigrationError)?;
-
-    Ok(connection)
-}
-
-fn unpack_walkdir_entry_result(
-    entry_res: Result<DirEntry, walkdir::Error>,
-) -> Result<DirEntry, ()> {
-    match entry_res {
-        Ok(entry) => Ok(entry),
-        Err(err) => {
-            if let Some(path) = err.path() {
-                warning!(
-                    "Cannot traverse {}: {}",
-                    path.display().to_string(),
-                    io::Error::from(err)
-                );
-            } else {
-                warning!("Cannot traverse notes: {}", io::Error::from(err));
-            }
-
-            Err(())
-        }
-    }
-}
-
-fn index_note(index_connection: &mut Connection, path: &Path) -> Result<(), IndexNoteError> {
-    let mut file = File::open(path).map_err(IndexNoteError::OpenError)?;
-    let preamble = note::extract_preamble(&mut file).map_err(IndexNoteError::PreambleError)?;
-
-    index::add_note(index_connection, &preamble, path).map_err(IndexNoteError::IndexError)
+    QueryError(IndexLookupError),
 }
 
 fn make_note_at<E: Editor, Tz: TimeZone>(
@@ -491,17 +429,55 @@ fn open_in_editor<E: Editor>(editor: E, path: &Path) -> Result<(), EditorSpawnEr
     })
 }
 
-fn truncate_index_database(config: &NoteConfig) -> Result<(), io::Error> {
-    OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(config.index_db_path())
-        .map(|_file| ())
-        .or_else(|err| {
-            if err.kind() == io::ErrorKind::NotFound {
-                Ok(())
-            } else {
-                Err(err)
-            }
+fn reset_index_database(config: &NoteConfig) -> Result<(), index::ResetError> {
+    index::reset(&config.index_db_path())
+}
+
+fn open_index_database(config: &NoteConfig) -> Result<Connection, IndexOpenError> {
+    index::open(&config.index_db_path())
+}
+
+/// Get all note file paths in a best-effort fashion. If there is an error where some
+/// notes cannot be read, warnings will be logged.
+fn note_file_paths(config: &NoteConfig) -> impl Iterator<Item = PathBuf> {
+    WalkDir::new(config.notes_directory_path())
+        .into_iter()
+        .chain(WalkDir::new(config.daily_directory_path()))
+        .filter_map(|entry_res| {
+            // skip entires we can't read, so we can get the rest
+            unpack_walkdir_entry_result(entry_res)
+                .ok()
+                .and_then(|entry| {
+                    let is_file = entry.file_type().is_file();
+                    is_file.then_some(entry.into_path())
+                })
         })
+}
+
+fn unpack_walkdir_entry_result(
+    entry_res: Result<DirEntry, walkdir::Error>,
+) -> Result<DirEntry, ()> {
+    match entry_res {
+        Ok(entry) => Ok(entry),
+        Err(err) => {
+            if let Some(path) = err.path() {
+                warning!(
+                    "Cannot traverse {}: {}",
+                    path.display().to_string(),
+                    io::Error::from(err)
+                );
+            } else {
+                warning!("Cannot traverse notes: {}", io::Error::from(err));
+            }
+
+            Err(())
+        }
+    }
+}
+
+fn index_note(index_connection: &mut Connection, path: &Path) -> Result<(), IndexNoteError> {
+    let mut file = File::open(path).map_err(IndexNoteError::OpenError)?;
+    let preamble = note::extract_preamble(&mut file).map_err(IndexNoteError::PreambleError)?;
+
+    index::add_note(index_connection, &preamble, path).map_err(IndexNoteError::IndexError)
 }

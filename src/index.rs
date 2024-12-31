@@ -1,5 +1,7 @@
 use std::{
     collections::HashMap,
+    fs::OpenOptions,
+    io,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -12,12 +14,6 @@ use thiserror::Error;
 use crate::{note::Preamble, warning};
 
 const DB_DATE_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.f";
-
-pub fn setup_database(connection: &mut Connection) -> Result<(), MigrationError> {
-    migrations().to_latest(connection)?;
-
-    Ok(())
-}
 
 #[derive(Error, Debug)]
 #[error(transparent)]
@@ -33,6 +29,42 @@ impl From<rusqlite::Error> for QueryFailure {
         Self::DatabaseFailure(error)
     }
 }
+
+pub fn open(path: &Path) -> Result<Connection, OpenError> {
+    let mut connection = Connection::open(path).map_err(OpenError::ConnectionOpenError)?;
+
+    setup_database(&mut connection).map_err(OpenError::MigrationError)?;
+
+    Ok(connection)
+}
+
+#[derive(Error, Debug)]
+pub enum OpenError {
+    #[error("could not open index: {0}")]
+    ConnectionOpenError(rusqlite::Error),
+
+    #[error("could not setup index: {0}")]
+    MigrationError(MigrationError),
+}
+
+pub fn reset(path: &Path) -> Result<(), ResetError> {
+    OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map(|_file| ())
+        .or_else(|err| {
+            if err.kind() == io::ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(ResetError(err))
+            }
+        })
+}
+
+#[derive(Error, Debug)]
+#[error("could not reset index database: {0}")]
+pub struct ResetError(io::Error);
 
 pub fn add_note(
     connection: &mut Connection,
@@ -114,6 +146,12 @@ pub enum DeleteError {
 
     #[error("cannot delete a non-utf-8 path from the database: {0}")]
     BadPath(PathBuf),
+}
+
+fn setup_database(connection: &mut Connection) -> Result<(), MigrationError> {
+    migrations().to_latest(connection)?;
+
+    Ok(())
 }
 
 fn unpack_row(row: &Row) -> Result<(PathBuf, Preamble), QueryFailure> {
