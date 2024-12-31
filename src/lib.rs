@@ -93,7 +93,8 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
         })?;
 
     if destination_exists {
-        open_note_in_editor(config, editor, &destination_path).map_err(InnerMakeNoteError::from)?;
+        open_note_in_editor(config, editor, &destination_path)
+            .map_err(InnerMakeNoteError::OpenNoteInEditorError)?;
 
         Ok(())
     } else {
@@ -174,7 +175,7 @@ pub fn open_note<E: Editor>(
     path: &Path,
 ) -> Result<(), OpenNoteError> {
     ensure_note_exists(path).map_err(InnerOpenNoteError::LookupError)?;
-    open_note_in_editor(config, editor, path).map_err(InnerOpenNoteError::from)?;
+    open_note_in_editor(config, editor, path).map_err(InnerOpenNoteError::OpenNoteInEditorError)?;
 
     Ok(())
 }
@@ -198,9 +199,10 @@ enum InnerOpenNoteError {
 pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
     // This is a bit of a hack, but is easier than trying to prune stale entries from
     // the index
-    reset_index_database(config).map_err(InnerIndexNotesError::from)?;
+    reset_index_database(config).map_err(InnerIndexNotesError::IndexResetError)?;
 
-    let mut connection = open_index_database(config).map_err(InnerIndexNotesError::from)?;
+    let mut connection =
+        open_index_database(config).map_err(InnerIndexNotesError::IndexOpenError)?;
 
     for path in note_file_paths(config) {
         if let Err(err) = index_note(&mut connection, &path) {
@@ -228,9 +230,10 @@ enum InnerIndexNotesError {
 }
 
 pub fn indexed_notes(config: &NoteConfig) -> Result<HashMap<PathBuf, Preamble>, IndexedNotesError> {
-    let mut connection = open_index_database(config).map_err(InnerIndexedNotesError::from)?;
+    let mut connection =
+        open_index_database(config).map_err(InnerIndexedNotesError::IndexOpenError)?;
 
-    let notes = index::all_notes(&mut connection).map_err(InnerIndexedNotesError::from)?;
+    let notes = index::all_notes(&mut connection).map_err(InnerIndexedNotesError::QueryError)?;
 
     Ok(notes)
 }
