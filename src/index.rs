@@ -15,21 +15,6 @@ use crate::{note::Preamble, warning};
 
 const DB_DATE_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.f";
 
-#[derive(Error, Debug)]
-#[error(transparent)]
-pub struct MigrationError(#[from] rusqlite_migration::Error);
-
-enum QueryFailure {
-    InvalidRow(String),
-    DatabaseFailure(rusqlite::Error),
-}
-
-impl From<rusqlite::Error> for QueryFailure {
-    fn from(error: rusqlite::Error) -> Self {
-        Self::DatabaseFailure(error)
-    }
-}
-
 pub fn open(path: &Path) -> Result<Connection, OpenError> {
     let mut connection = Connection::open(path).map_err(OpenError::ConnectionOpenError)?;
 
@@ -46,6 +31,10 @@ pub enum OpenError {
     #[error("could not setup index: {0}")]
     MigrationError(MigrationError),
 }
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub struct MigrationError(#[from] rusqlite_migration::Error);
 
 pub fn reset(path: &Path) -> Result<(), ResetError> {
     OpenOptions::new()
@@ -186,6 +175,17 @@ fn datetime_from_database(
                     ))
                 })
         })
+}
+
+enum QueryFailure {
+    InvalidRow(String),
+    DatabaseFailure(rusqlite::Error),
+}
+
+impl From<rusqlite::Error> for QueryFailure {
+    fn from(error: rusqlite::Error) -> Self {
+        Self::DatabaseFailure(error)
+    }
 }
 
 fn migrations() -> Migrations<'static> {
