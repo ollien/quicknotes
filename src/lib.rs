@@ -488,8 +488,8 @@ fn note_file_paths(config: &NoteConfig) -> impl Iterator<Item = PathBuf> {
             unpack_walkdir_entry_result(entry_res)
                 .ok()
                 .and_then(|entry| {
-                    let is_file = entry.file_type().is_file();
-                    is_file.then_some(entry.into_path())
+                    let isnt_dir = !entry.file_type().is_dir();
+                    isnt_dir.then_some(entry.into_path())
                 })
         })
 }
