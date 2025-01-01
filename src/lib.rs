@@ -72,11 +72,18 @@ pub fn make_note<E: Editor, Tz: TimeZone>(
     Ok(())
 }
 
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub struct MakeNoteError {
+    #[from]
+    inner: MakeNoteAtError,
+}
+
 pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
     creation_time: &DateTime<Tz>,
-) -> Result<(), MakeNoteError> {
+) -> Result<(), MakeOrOpenDailyNoteError> {
     let filename = note::filename_for_date(creation_time.date_naive(), &config.file_extension);
     let destination_path = config.daily_directory_path().join(filename);
     let destination_exists = ensure_note_exists(&destination_path)
@@ -85,7 +92,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
             if err.kind() == io::ErrorKind::NotFound {
                 Ok(false)
             } else {
-                Err(InnerMakeNoteError::NoteLookupError {
+                Err(InnerMakeOrOpenDailyNoteError::NoteLookupError {
                     destination: destination_path.display().to_string(),
                     err,
                 })
@@ -94,7 +101,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
 
     if destination_exists {
         open_note_in_editor(config, editor, &destination_path)
-            .map_err(InnerMakeNoteError::OpenNoteInEditorError)?;
+            .map_err(InnerMakeOrOpenDailyNoteError::from)?;
 
         Ok(())
     } else {
@@ -104,7 +111,8 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
             creation_time.date_naive().format("%Y-%m-%d").to_string(),
             creation_time,
             &destination_path,
-        )?;
+        )
+        .map_err(InnerMakeOrOpenDailyNoteError::from)?;
 
         Ok(())
     }
@@ -112,30 +120,13 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
 
 #[derive(Error, Debug)]
 #[error(transparent)]
-pub struct MakeNoteError {
+pub struct MakeOrOpenDailyNoteError {
     #[from]
-    inner: InnerMakeNoteError,
+    inner: InnerMakeOrOpenDailyNoteError,
 }
 
 #[derive(Error, Debug)]
-enum InnerMakeNoteError {
-    #[error("could not create temporary file: {0}")]
-    CreateTempfileError(io::Error),
-
-    #[error("could not write preamble to file: {0}")]
-    PreambleWriteError(io::Error),
-
-    #[error("could not encode preamble to tempfile: {0}")]
-    PreambleEncodeError(SerializeError),
-
-    #[error("could not store note at {destination:?}. It still exists at {src:?}: {err}")]
-    NoteStoreError {
-        src: String,
-        destination: String,
-        #[source]
-        err: io::Error,
-    },
-
+enum InnerMakeOrOpenDailyNoteError {
     #[error("could not check if note exists at {destination:?}: {err}")]
     NoteLookupError {
         destination: String,
@@ -143,13 +134,93 @@ enum InnerMakeNoteError {
         err: io::Error,
     },
 
-    // This should VERY RARELY happen. There are failsafes to make this as hard as possible.
-    // You can see why at its usage, but tl;dr tempfile can fail to keep the file (on windows)
-    #[error("could not store note. It was unable to be preserved ({keep_error}), and then could not be read for you ({read_error}).")]
-    NoteLostError {
+    #[error("could not open daily note: {0}")]
+    OpenNoteError(#[from] OpenNoteInEditorError),
+
+    #[error("could not create new daily note: {0}")]
+    MakeNoteAtError(#[from] MakeNoteAtError),
+}
+
+pub fn open_note<E: Editor>(
+    config: &NoteConfig,
+    editor: E,
+    path: &Path,
+) -> Result<(), OpenNoteError> {
+    open_existing_note(config, editor, path)?;
+
+    Ok(())
+}
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub struct OpenNoteError {
+    #[from]
+    inner: OpenExistingNoteError,
+}
+
+pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
+    index_all_notes(config)?;
+
+    Ok(())
+}
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub struct IndexNotesError {
+    #[from]
+    inner: IndexAllNotesError,
+}
+
+pub fn indexed_notes(config: &NoteConfig) -> Result<HashMap<PathBuf, Preamble>, IndexedNotesError> {
+    let notes = all_indexed_notes(config)?;
+
+    Ok(notes)
+}
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub struct IndexedNotesError {
+    #[from]
+    inner: AllIndexedNotesError,
+}
+
+fn make_note_at<E: Editor, Tz: TimeZone>(
+    config: &NoteConfig,
+    editor: E,
+    title: String,
+    creation_time: &DateTime<Tz>,
+    destination_path: &Path,
+) -> Result<(), MakeNoteAtError> {
+    let tempfile = make_tempfile(config).map_err(MakeNoteAtError::CreateTempfileError)?;
+    let preamble = Preamble::new(title, creation_time.fixed_offset());
+
+    write_preamble(&preamble, tempfile.path())?;
+    open_in_editor(editor, tempfile.path())?;
+    store_note(tempfile, destination_path).map_err(|err| MakeNoteAtError::StoreNoteError {
+        err,
+        destination: destination_path.display().to_string(),
+    })?;
+
+    let mut index_connection = open_index_database(config)?;
+    index_note(&mut index_connection, destination_path)?;
+
+    Ok(())
+}
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+enum MakeNoteAtError {
+    #[error("could not create temporary file: {0}")]
+    CreateTempfileError(io::Error),
+
+    #[error("could not write preamble to file: {0}")]
+    WritePreambleError(#[from] WritePreambleError),
+
+    #[error("could not store note at {destination:?}: {err}")]
+    StoreNoteError {
+        destination: String,
         #[source]
-        keep_error: io::Error,
-        read_error: io::Error,
+        err: StoreNoteError,
     },
 
     #[error(transparent)]
@@ -160,170 +231,55 @@ enum InnerMakeNoteError {
 
     #[error(transparent)]
     IndexOpenError(#[from] IndexOpenError),
-
-    // TODO: combine the above with these? somehow?
-    #[error(transparent)]
-    OpenNoteInEditorError(#[from] OpenNoteInEditorError),
-
-    #[error("could not store note at {destination:?} as a file exists with the same name. It still exists at {src:?}")]
-    NoteClobberPreventedError { src: String, destination: String },
 }
 
-pub fn open_note<E: Editor>(
-    config: &NoteConfig,
-    editor: E,
-    path: &Path,
-) -> Result<(), OpenNoteError> {
-    ensure_note_exists(path).map_err(InnerOpenNoteError::LookupError)?;
-    open_note_in_editor(config, editor, path).map_err(InnerOpenNoteError::OpenNoteInEditorError)?;
-
-    Ok(())
-}
-
-#[derive(Error, Debug)]
-#[error(transparent)]
-pub struct OpenNoteError {
-    #[from]
-    inner: InnerOpenNoteError,
-}
-
-#[derive(Error, Debug)]
-enum InnerOpenNoteError {
-    #[error("could not open note: {0}")]
-    LookupError(io::Error),
-
-    #[error(transparent)]
-    OpenNoteInEditorError(#[from] OpenNoteInEditorError),
-}
-
-pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
-    // This is a bit of a hack, but is easier than trying to prune stale entries from
-    // the index
-    reset_index_database(config).map_err(InnerIndexNotesError::IndexResetError)?;
-
-    let mut connection =
-        open_index_database(config).map_err(InnerIndexNotesError::IndexOpenError)?;
-
-    for path in note_file_paths(config) {
-        if let Err(err) = index_note(&mut connection, &path) {
-            warning!("could not index note at {}: {}", path.display(), err);
-        }
-    }
-
-    Ok(())
-}
-
-#[derive(Error, Debug)]
-#[error(transparent)]
-pub struct IndexNotesError {
-    #[from]
-    inner: InnerIndexNotesError,
-}
-
-#[derive(Error, Debug)]
-enum InnerIndexNotesError {
-    #[error(transparent)]
-    IndexResetError(#[from] index::ResetError),
-
-    #[error(transparent)]
-    IndexOpenError(#[from] IndexOpenError),
-}
-
-pub fn indexed_notes(config: &NoteConfig) -> Result<HashMap<PathBuf, Preamble>, IndexedNotesError> {
-    let mut connection =
-        open_index_database(config).map_err(InnerIndexedNotesError::IndexOpenError)?;
-
-    let notes = index::all_notes(&mut connection).map_err(InnerIndexedNotesError::QueryError)?;
-
-    Ok(notes)
-}
-
-#[derive(Error, Debug)]
-#[error(transparent)]
-pub struct IndexedNotesError {
-    #[from]
-    inner: InnerIndexedNotesError,
-}
-
-#[derive(Error, Debug)]
-enum InnerIndexedNotesError {
-    #[error(transparent)]
-    IndexOpenError(#[from] IndexOpenError),
-
-    #[error("could not query index database: {0}")]
-    QueryError(#[from] IndexLookupError),
-}
-
-fn make_note_at<E: Editor, Tz: TimeZone>(
-    config: &NoteConfig,
-    editor: E,
-    title: String,
-    creation_time: &DateTime<Tz>,
-    destination_path: &Path,
-) -> Result<(), InnerMakeNoteError> {
-    let tempfile = make_tempfile(config)?;
-    let preamble = Preamble::new(title, creation_time.fixed_offset());
-
-    write_preamble(&preamble, tempfile.path())?;
-    open_in_editor(editor, tempfile.path())?;
-    store_note(tempfile, destination_path)?;
-
-    let mut index_connection = open_index_database(config)?;
-    index_note(&mut index_connection, destination_path)?;
-
-    Ok(())
-}
-
-fn store_note(tempfile: NamedTempFile, destination: &Path) -> Result<(), InnerMakeNoteError> {
-    if let Err(err) = ensure_no_clobber(tempfile.path(), destination) {
+fn store_note(tempfile: NamedTempFile, destination: &Path) -> Result<(), StoreNoteError> {
+    if destination.exists() {
+        let tempfile_path = tempfile.path().display().to_string();
         try_preserve_note(tempfile)?;
 
-        return Err(err);
+        return Err(StoreNoteError::NoteClobberPrevented { src: tempfile_path });
     }
 
     // copy, don't use tempfile.persist as it does not work across filesystems
     match std::fs::copy(tempfile.path(), destination) {
         Ok(_bytes) => Ok(()),
         Err(err) => {
-            let tempfile_path = tempfile.path().to_path_buf();
+            let tempfile_path = tempfile.path().display().to_string();
             try_preserve_note(tempfile)?;
 
-            Err(InnerMakeNoteError::NoteStoreError {
-                src: tempfile_path.display().to_string(),
-                destination: destination.display().to_string(),
+            Err(StoreNoteError::CopyError {
                 err,
+                src: tempfile_path,
             })
         }
     }
 }
 
-fn make_tempfile(config: &NoteConfig) -> Result<NamedTempFile, InnerMakeNoteError> {
+#[derive(Error, Debug)]
+enum StoreNoteError {
+    #[error("it still exists at {src:?}: {err}")]
+    CopyError { src: String, err: io::Error },
+
+    #[error("file exists with the same name; it still exists at {src:?}")]
+    NoteClobberPrevented { src: String },
+
+    #[error(transparent)]
+    TryPreserveNoteError(#[from] TryPreserveNoteError),
+}
+
+fn make_tempfile(config: &NoteConfig) -> Result<NamedTempFile, io::Error> {
     let mut builder = TempFileBuilder::new();
     let builder = builder.suffix(&config.file_extension);
 
     if let Some(temp_dir) = config.temp_root_override.as_ref() {
-        builder
-            .tempfile_in(temp_dir)
-            .map_err(InnerMakeNoteError::CreateTempfileError)
+        builder.tempfile_in(temp_dir)
     } else {
-        builder
-            .tempfile()
-            .map_err(InnerMakeNoteError::CreateTempfileError)
+        builder.tempfile()
     }
 }
 
-fn ensure_no_clobber(src: &Path, destination: &Path) -> Result<(), InnerMakeNoteError> {
-    if destination.exists() {
-        Err(InnerMakeNoteError::NoteClobberPreventedError {
-            src: src.display().to_string(),
-            destination: destination.display().to_string(),
-        })
-    } else {
-        Ok(())
-    }
-}
-
-fn try_preserve_note(tempfile: NamedTempFile) -> Result<(), InnerMakeNoteError> {
+fn try_preserve_note(tempfile: NamedTempFile) -> Result<(), TryPreserveNoteError> {
     // Store the path in case the keep operation fails somehow
     let tempfile_path = tempfile.path().to_path_buf();
 
@@ -337,7 +293,7 @@ fn try_preserve_note(tempfile: NamedTempFile) -> Result<(), InnerMakeNoteError> 
                 eprintln!("{contents}");
                 Ok(())
             }
-            Err(read_error) => Err(InnerMakeNoteError::NoteLostError {
+            Err(read_error) => Err(TryPreserveNoteError::NoteLostError {
                 keep_error,
                 read_error,
             }),
@@ -345,18 +301,57 @@ fn try_preserve_note(tempfile: NamedTempFile) -> Result<(), InnerMakeNoteError> 
     }
 }
 
-fn write_preamble(preamble: &Preamble, path: &Path) -> Result<(), InnerMakeNoteError> {
+#[derive(Error, Debug)]
+enum TryPreserveNoteError {
+    // This should VERY RARELY happen. There are failsafes to make this as hard as possible.
+    // You can see why at its usage, but tl;dr tempfile can fail to keep the file (on windows)
+    #[error("note was unable to be preserved ({keep_error}), and then could not be read for you ({read_error}).")]
+    NoteLostError {
+        #[source]
+        keep_error: io::Error,
+        read_error: io::Error,
+    },
+}
+
+fn write_preamble(preamble: &Preamble, path: &Path) -> Result<(), WritePreambleError> {
     let mut file = OpenOptions::new()
         .write(true)
         .create(false)
         .open(path)
-        .map_err(InnerMakeNoteError::PreambleWriteError)?;
+        .map_err(WritePreambleError::OpenError)?;
 
-    let serialized_preamble = preamble
-        .serialize()
-        .map_err(InnerMakeNoteError::PreambleEncodeError)?;
+    let serialized_preamble = preamble.serialize()?;
 
-    write!(file, "{serialized_preamble}\n\n").map_err(InnerMakeNoteError::PreambleWriteError)
+    write!(file, "{serialized_preamble}\n\n").map_err(WritePreambleError::WriteError)
+}
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+enum WritePreambleError {
+    OpenError(io::Error),
+    EncodeError(#[from] SerializeError),
+    WriteError(io::Error),
+}
+
+fn open_existing_note<E: Editor>(
+    config: &NoteConfig,
+    editor: E,
+    path: &Path,
+) -> Result<(), OpenExistingNoteError> {
+    ensure_note_exists(path).map_err(OpenExistingNoteError::LookupError)?;
+    open_note_in_editor(config, editor, path)?;
+
+    Ok(())
+}
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+enum OpenExistingNoteError {
+    #[error("could not open note: {0}")]
+    LookupError(io::Error),
+
+    #[error(transparent)]
+    OpenNoteInEditorError(#[from] OpenNoteInEditorError),
 }
 
 fn ensure_note_exists(path: &Path) -> Result<(), io::Error> {
@@ -429,6 +424,48 @@ fn open_in_editor<E: Editor>(editor: E, path: &Path) -> Result<(), EditorSpawnEr
         editor: editor.name().to_owned(),
         err,
     })
+}
+
+fn index_all_notes(config: &NoteConfig) -> Result<(), IndexAllNotesError> {
+    // This is a bit of a hack, but is easier than trying to prune stale entries from
+    // the index
+    reset_index_database(config)?;
+    let mut connection = open_index_database(config)?;
+
+    for path in note_file_paths(config) {
+        if let Err(err) = index_note(&mut connection, &path) {
+            warning!("could not index note at {}: {}", path.display(), err);
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Error, Debug)]
+enum IndexAllNotesError {
+    #[error(transparent)]
+    IndexResetError(#[from] index::ResetError),
+
+    #[error(transparent)]
+    IndexOpenError(#[from] IndexOpenError),
+}
+
+fn all_indexed_notes(
+    config: &NoteConfig,
+) -> Result<HashMap<PathBuf, Preamble>, AllIndexedNotesError> {
+    let mut connection = open_index_database(config)?;
+    let notes = index::all_notes(&mut connection)?;
+
+    Ok(notes)
+}
+
+#[derive(Error, Debug)]
+enum AllIndexedNotesError {
+    #[error(transparent)]
+    IndexOpenError(#[from] IndexOpenError),
+
+    #[error("could not query index database: {0}")]
+    QueryError(#[from] IndexLookupError),
 }
 
 fn reset_index_database(config: &NoteConfig) -> Result<(), index::ResetError> {
