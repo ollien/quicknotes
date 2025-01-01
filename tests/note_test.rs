@@ -78,3 +78,33 @@ fn editing_an_existing_daily_alters_the_same_file() {
 
     insta::assert_snapshot!(note_contents);
 }
+
+#[test]
+fn opening_two_notes_with_the_same_name_prevents_clobbering() {
+    let roots = testutil::setup_filesystem();
+
+    let config = NoteConfig {
+        file_extension: ".txt".to_string(),
+        root_dir: roots.note_root.path().to_owned(),
+        temp_root_override: Some(roots.temp_root.path().to_owned()),
+    };
+
+    let mut editor = AppendEditor::new();
+
+    editor.note_contents("hello, world!\n".to_string());
+    quicknotes::make_note(&config, editor, "my cool note".to_string(), &test_time())
+        .expect("could not write note");
+
+    let note_path = roots.note_root.path().join("notes/my-cool-note.txt");
+    let original_note_contents = fs::read_to_string(&note_path).expect("failed to open note");
+
+    let mut editor = AppendEditor::new();
+    editor.note_contents("oh no\n".to_string());
+    let second_note_result =
+        quicknotes::make_note(&config, editor, "my cool note".to_string(), &test_time());
+
+    assert!(second_note_result.is_err());
+
+    let upd_note_contents = fs::read_to_string(&note_path).expect("failed to open note");
+    assert_eq!(upd_note_contents, original_note_contents);
+}
