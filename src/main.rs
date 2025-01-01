@@ -97,10 +97,24 @@ fn cli_command() -> ClapCommand {
     ClapCommand::new("qn")
         .subcommand_required(true)
         .arg_required_else_help(true)
-        .subcommand(ClapCommand::new("new").arg(Arg::new("title").num_args(1..).required(true)))
-        .subcommand(ClapCommand::new("daily"))
-        .subcommand(ClapCommand::new("index"))
-        .subcommand(ClapCommand::new("open"))
+        .subcommand(
+            ClapCommand::new("new")
+                .arg(Arg::new("title").num_args(1..).required(true))
+                .about("Create a new note")
+                .long_about(
+                    concat!(
+                        "Create a new note.",
+                        " The title for the note can be entered into the shell directly, including spaces.")
+                    ,
+            )
+        )
+        .subcommand(ClapCommand::new("daily").about("Open or create today's daily note"))
+        .subcommand(ClapCommand::new("index")
+            .about("Index the notes directory")
+            .long_about(concat!("Scan the notes directory, and add the notes there to the index.",
+            " This generally should not be necessary, as opening a note adds it to the index automatically,",
+            " but if notes are edited outside of quicknotes or deleted, then this can be useful.")))
+        .subcommand(ClapCommand::new("open").about("Open an existing note"))
 }
 
 fn run_new(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches) {
