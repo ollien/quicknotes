@@ -64,12 +64,13 @@ pub fn make_note<E: Editor, Tz: TimeZone>(
     editor: E,
     title: String,
     creation_time: &DateTime<Tz>,
-) -> Result<(), MakeNoteError> {
+) -> Result<PathBuf, MakeNoteError> {
     let filename = note::filename_for_title(&title, &config.file_extension);
     let destination_path = config.notes_directory_path().join(filename);
 
     make_note_at(config, editor, title, creation_time, &destination_path)?;
-    Ok(())
+
+    Ok(destination_path)
 }
 
 #[derive(Error, Debug)]
@@ -83,7 +84,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
     creation_time: &DateTime<Tz>,
-) -> Result<(), MakeOrOpenDailyNoteError> {
+) -> Result<PathBuf, MakeOrOpenDailyNoteError> {
     let filename = note::filename_for_date(creation_time.date_naive(), &config.file_extension);
     let destination_path = config.daily_directory_path().join(filename);
     let destination_exists = ensure_note_exists(&destination_path)
@@ -103,7 +104,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
         open_note_in_editor(config, editor, &destination_path)
             .map_err(InnerMakeOrOpenDailyNoteError::from)?;
 
-        Ok(())
+        Ok(destination_path)
     } else {
         make_note_at(
             config,
@@ -114,7 +115,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
         )
         .map_err(InnerMakeOrOpenDailyNoteError::from)?;
 
-        Ok(())
+        Ok(destination_path)
     }
 }
 
