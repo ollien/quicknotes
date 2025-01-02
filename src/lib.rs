@@ -139,8 +139,8 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
     }
 }
 
-/// An error that occurred during a call to [`make_or_open_daily_note`]. See its
-/// [errors section](`make_or_open_daily_note#Errors`) for more details.
+/// An error that occurred during a call to [`make_or_open_daily`]. See its
+/// [errors section](`make_or_open_daily#Errors`) for more details.
 #[derive(Error, Debug)]
 #[error(transparent)]
 pub struct MakeOrOpenDailyNoteError {
