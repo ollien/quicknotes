@@ -121,7 +121,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
         })?;
 
     if destination_exists {
-        open_note_in_editor(config, editor, &destination_path)
+        open_existing_note_in_editor(config, editor, &destination_path)
             .map_err(InnerMakeOrOpenDailyNoteError::from)?;
 
         Ok(destination_path)
@@ -158,7 +158,7 @@ enum InnerMakeOrOpenDailyNoteError {
     },
 
     #[error("could not open daily note: {0}")]
-    OpenNoteError(#[from] OpenNoteInEditorError),
+    OpenNoteError(#[from] OpenExistingNoteInEditorError),
 
     #[error("could not create new daily note: {0}")]
     MakeNoteAtError(#[from] MakeNoteAtError),
@@ -269,7 +269,7 @@ enum MakeNoteAtError {
     },
 
     #[error(transparent)]
-    EditorSpawnError(#[from] EditorSpawnError),
+    EditorSpawnError(#[from] OpenInEditorError),
 
     #[error(transparent)]
     IndexNoteError(#[from] IndexNoteError),
@@ -384,7 +384,7 @@ fn open_existing_note<E: Editor>(
     path: &Path,
 ) -> Result<(), OpenExistingNoteError> {
     ensure_note_exists(path).map_err(OpenExistingNoteError::LookupError)?;
-    open_note_in_editor(config, editor, path)?;
+    open_existing_note_in_editor(config, editor, path)?;
 
     Ok(())
 }
@@ -396,7 +396,7 @@ enum OpenExistingNoteError {
     LookupError(io::Error),
 
     #[error(transparent)]
-    OpenNoteInEditorError(#[from] OpenNoteInEditorError),
+    OpenNoteInEditorError(#[from] OpenExistingNoteInEditorError),
 }
 
 fn ensure_note_exists(path: &Path) -> Result<(), io::Error> {
@@ -412,11 +412,11 @@ fn ensure_note_exists(path: &Path) -> Result<(), io::Error> {
     })
 }
 
-fn open_note_in_editor<E: Editor>(
+fn open_existing_note_in_editor<E: Editor>(
     config: &NoteConfig,
     editor: E,
     path: &Path,
-) -> Result<(), OpenNoteInEditorError> {
+) -> Result<(), OpenExistingNoteInEditorError> {
     open_in_editor(editor, path)?;
 
     let mut index_connection = open_index_database(config)?;
@@ -445,9 +445,9 @@ fn open_note_in_editor<E: Editor>(
 
 #[derive(Error, Debug)]
 #[allow(clippy::enum_variant_names)]
-enum OpenNoteInEditorError {
+enum OpenExistingNoteInEditorError {
     #[error(transparent)]
-    EditorSpawnError(#[from] EditorSpawnError),
+    EditorSpawnError(#[from] OpenInEditorError),
 
     #[error(transparent)]
     IndexOpenError(#[from] IndexOpenError),
@@ -456,19 +456,19 @@ enum OpenNoteInEditorError {
     IndexNoteError(#[from] IndexNoteError),
 }
 
-#[derive(Error, Debug)]
-#[error("could not spawn editor '{editor}': {err}")]
-struct EditorSpawnError {
-    editor: String,
-    #[source]
-    err: io::Error,
-}
-
-fn open_in_editor<E: Editor>(editor: E, path: &Path) -> Result<(), EditorSpawnError> {
-    editor.edit(path).map_err(|err| EditorSpawnError {
+fn open_in_editor<E: Editor>(editor: E, path: &Path) -> Result<(), OpenInEditorError> {
+    editor.edit(path).map_err(|err| OpenInEditorError {
         editor: editor.name().to_owned(),
         err,
     })
+}
+
+#[derive(Error, Debug)]
+#[error("could not spawn editor '{editor}': {err}")]
+struct OpenInEditorError {
+    editor: String,
+    #[source]
+    err: io::Error,
 }
 
 fn index_all_notes(config: &NoteConfig) -> Result<(), IndexAllNotesError> {
