@@ -25,7 +25,7 @@ impl Preamble {
     /// Serialize the preamble for being written to a note. It will be serialized
     /// as a TOML encoded string, between two `---`s. For example
     ///
-    /// ```
+    /// ```text
     /// ---
     /// title = "my cool note"
     /// created_at = 2015-10-21T07:28:00-07:00
