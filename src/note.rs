@@ -9,6 +9,8 @@ use serde_derive::{Deserialize, Serialize};
 use thiserror::Error;
 use toml::value::Datetime as TomlDateTime;
 
+/// Holds metadata about the note. This metadata is stored in the first section of the note when
+/// stored on disk.
 #[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug)]
 pub struct Preamble {
     pub title: String,
@@ -20,6 +22,18 @@ pub struct Preamble {
 }
 
 impl Preamble {
+    /// Serialize the preamble for being written to a note. It will be serialized
+    /// as a TOML encoded string, between two `---`s. For example
+    ///
+    /// ```
+    /// ---
+    /// title = "my cool note"
+    /// created_at = 2015-10-21T07:28:00-07:00
+    /// ---
+    /// ```
+    ///
+    /// # Errors
+    /// Returns an error if the data stored in the preamble is not serializable at TOML
     pub fn serialize(&self) -> Result<String, SerializeError> {
         let toml_preamble = toml::to_string_pretty(self).map_err(SerializeError)?;
         let serialized = format!("---\n{}\n---", toml_preamble.trim_end());

@@ -1,5 +1,4 @@
 #![warn(clippy::all, clippy::pedantic)]
-#![allow(clippy::missing_errors_doc)]
 #![allow(clippy::enum_variant_names)]
 
 use chrono::{DateTime, TimeZone};
@@ -59,6 +58,15 @@ impl NoteConfig {
     }
 }
 
+/// Create a new note.
+///
+/// The note will be created in the notes directory, with a name as close to the given title as
+/// possible, and then opened in the editor.
+///
+/// # Errors
+///
+/// Returns an error if there is an I/O failure creating the note, the editor fails to launch, or
+/// if there is a problem adding the note to the index.
 pub fn make_note<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
@@ -73,6 +81,8 @@ pub fn make_note<E: Editor, Tz: TimeZone>(
     Ok(destination_path)
 }
 
+/// An error that occurred during a call to [`make_note`]. [errors section](`make_note#Errors`)
+/// for more details.
 #[derive(Error, Debug)]
 #[error(transparent)]
 pub struct MakeNoteError {
@@ -80,6 +90,16 @@ pub struct MakeNoteError {
     inner: MakeNoteAtError,
 }
 
+/// Create or open a daily note for the given datetime.
+///
+/// This operates very similarly to [`make_note`], but the title of the note will be the
+/// date part of the creation time. If one already exists, it will be opened instead of
+/// creating a new one.
+///
+/// # Errors
+///
+/// Returns an error if there is an I/O failure creating the note, the editor fails to launch, or
+/// if there is a problem adding the note to the index.
 pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
@@ -119,6 +139,8 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
     }
 }
 
+/// An error that occurred during a call to [`make_or_open_daily_note`]. See its
+/// [errors section](`make_or_open_daily_note#Errors`) for more details.
 #[derive(Error, Debug)]
 #[error(transparent)]
 pub struct MakeOrOpenDailyNoteError {
@@ -142,6 +164,12 @@ enum InnerMakeOrOpenDailyNoteError {
     MakeNoteAtError(#[from] MakeNoteAtError),
 }
 
+/// Open an existing note at the given path in the editor.
+///
+/// # Errors
+///
+/// Returns an error if there was an I/O problem locating the existing note, the editor
+/// fails to launch, or there is a problem updating the note's entry in the index.
 pub fn open_note<E: Editor>(
     config: &NoteConfig,
     editor: E,
@@ -159,6 +187,15 @@ pub struct OpenNoteError {
     inner: OpenExistingNoteError,
 }
 
+/// Index all notes in the notes and dailies directories. This will also remove deleted files
+/// from the index.
+///
+/// # Errors
+///
+/// Returns an error if there is a problem opening or the index.
+///
+/// Note that this will return `Ok` if there is a problem indexing an individual note, but a
+/// warning will be printed to stderr.
 pub fn index_notes(config: &NoteConfig) -> Result<(), IndexNotesError> {
     index_all_notes(config)?;
 
@@ -172,6 +209,13 @@ pub struct IndexNotesError {
     inner: IndexAllNotesError,
 }
 
+/// Get all of the notes currently stored in the index, and metadata about them.
+///
+/// The returned `HashMap` maps from the path where the note to the metadata stored in its preamble.
+///
+/// # Errors
+///
+/// Returns an error if there was a problem opening or reading from the index.
 pub fn indexed_notes(config: &NoteConfig) -> Result<HashMap<PathBuf, Preamble>, IndexedNotesError> {
     let notes = all_indexed_notes(config)?;
 
