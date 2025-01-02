@@ -1,7 +1,14 @@
 use std::{io, path::Path, process::Command};
 
+/// A text editor that can edit a given note. There is no requirement about the editor itself,
+/// just that it can edit a file at a given path.
 pub trait Editor {
     fn name(&self) -> &str;
+    /// Edit the given note
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the editor had a problem editing the note.
     fn edit(&self, path: &Path) -> io::Result<()>;
 }
 
@@ -15,6 +22,7 @@ impl<E: Editor> Editor for &E {
     }
 }
 
+/// An editor that runs a command to launch. This is useful for CLI tools such as `vim`.
 pub struct CommandEditor {
     command: String,
 }
