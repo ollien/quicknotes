@@ -9,7 +9,7 @@ use itertools::Itertools;
 use nucleo_picker::nucleo::pattern::CaseMatching;
 use nucleo_picker::{Picker, PickerOptions, Render};
 use quicknotes::{open_note, CommandEditor, NoteConfig, NotePreamble};
-use serde::{Deserialize, Deserializer};
+use serde::{de, Deserialize, Deserializer};
 use serde_derive::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::Display;
@@ -39,9 +39,10 @@ impl Render<IndexedNote> for IndexedNoteRenderer {
 
 #[derive(Serialize, Deserialize)]
 struct OnDiskConfig {
+    #[serde(deserialize_with = "OnDiskConfig::deserialize_notes_root")]
     pub notes_root: PathBuf,
 
-    #[serde(deserialize_with = "deserialize_extension")]
+    #[serde(deserialize_with = "OnDiskConfig::deserialize_extension")]
     pub note_file_extension: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -62,6 +63,26 @@ impl OnDiskConfig {
         };
 
         (note_config, editor)
+    }
+
+    fn deserialize_extension<'a, D: Deserializer<'a>>(deserializer: D) -> Result<String, D::Error> {
+        let ext: String = Deserialize::deserialize(deserializer)?;
+        if ext.starts_with('.') {
+            Ok(ext)
+        } else {
+            Ok(format!(".{ext}"))
+        }
+    }
+
+    fn deserialize_notes_root<'a, D: Deserializer<'a>>(
+        deserializer: D,
+    ) -> Result<PathBuf, D::Error> {
+        let notes_root: PathBuf = Deserialize::deserialize(deserializer)?;
+        if notes_root.is_absolute() {
+            Ok(notes_root)
+        } else {
+            Err(de::Error::custom("must be an absolute path"))
+        }
     }
 }
 
@@ -281,15 +302,6 @@ fn project_dirs() -> anyhow::Result<ProjectDirs> {
     )
 }
 
-fn deserialize_extension<'a, D: Deserializer<'a>>(deserializer: D) -> Result<String, D::Error> {
-    let ext: String = Deserialize::deserialize(deserializer)?;
-    if ext.starts_with('.') {
-        Ok(ext)
-    } else {
-        Ok(format!(".{ext}"))
-    }
-}
-
 fn pick<T: Send + Sync + 'static, R: Render<T>>(
     picker: &mut Picker<T, R>,
 ) -> Result<Option<&T>, io::Error> {
@@ -362,8 +374,8 @@ mod tests {
     fn deserialize_extension_adds_dot_to_file_extension() {
         let deserializer: StrDeserializer<'static, serde::de::value::Error> =
             "md".into_deserializer();
-        let extension =
-            deserialize_extension(deserializer).expect("failed to deserialize extension");
+        let extension = OnDiskConfig::deserialize_extension(deserializer)
+            .expect("failed to deserialize extension");
 
         assert_eq!(extension, ".md");
     }
@@ -372,9 +384,31 @@ mod tests {
     fn deserialize_extension_preserves_dot_in_file_extension() {
         let deserializer: StrDeserializer<'static, serde::de::value::Error> =
             ".txt".into_deserializer();
-        let extension =
-            deserialize_extension(deserializer).expect("failed to deserialize extension");
+        let extension = OnDiskConfig::deserialize_extension(deserializer)
+            .expect("failed to deserialize extension");
 
         assert_eq!(extension, ".txt");
+    }
+
+    #[test]
+    fn deserialize_notes_root_allows_absolute_paths() {
+        let deserializer: StrDeserializer<'static, serde::de::value::Error> =
+            "/home/ferris/Documents/quicknotes/".into_deserializer();
+
+        let notes_root = OnDiskConfig::deserialize_notes_root(deserializer)
+            .expect("failed to deserialize extension");
+
+        assert_eq!(
+            "/home/ferris/Documents/quicknotes/",
+            notes_root.to_str().unwrap()
+        );
+    }
+
+    #[test]
+    fn deserialize_notes_root_does_not_allow_relative_paths() {
+        let deserializer: StrDeserializer<'static, serde::de::value::Error> =
+            "Documents/quicknotes/".into_deserializer();
+
+        assert!(OnDiskConfig::deserialize_notes_root(deserializer).is_err());
     }
 }
