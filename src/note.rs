@@ -53,18 +53,18 @@ impl Preamble {
     }
 }
 
-pub fn filename_for_title(title: &str, extension: &str) -> String {
+pub fn filename_stem_for_title(title: &str) -> String {
     let base_name = title
         .to_lowercase()
         .split(' ')
         .map(remove_specials)
         .join("-");
 
-    base_name + extension
+    base_name
 }
 
-pub fn filename_for_date(date: NaiveDate, extension: &str) -> String {
-    date.format("%Y-%m-%d").to_string() + extension
+pub fn filename_stem_for_date(date: NaiveDate) -> String {
+    date.format("%Y-%m-%d").to_string()
 }
 
 pub fn extract_preamble<R: Read>(reader: R) -> Result<Preamble, InvalidPreambleError> {
@@ -268,27 +268,27 @@ mod tests {
 
     #[test]
     fn filename_for_title_converts_to_lowercase() {
-        assert_eq!("note.txt", filename_for_title("Note", ".txt"));
+        assert_eq!("note", filename_stem_for_title("Note"));
     }
 
     #[test]
     fn filename_for_title_converts_spaces_to_dashes() {
         assert_eq!(
-            "my-awesome-note.txt",
-            filename_for_title("my awesome note", ".txt")
+            "my-awesome-note",
+            filename_stem_for_title("my awesome note")
         );
     }
 
     #[test]
     fn filename_for_title_removes_specials() {
-        assert_eq!("im-a-note.txt", filename_for_title("i'm a note", ".txt"));
+        assert_eq!("im-a-note", filename_stem_for_title("i'm a note"));
     }
 
     #[test]
     fn filename_for_date_uses_date_in_simple_iso_format() {
         assert_eq!(
-            "2015-10-21.txt",
-            filename_for_date(NaiveDate::from_ymd_opt(2015, 10, 21).unwrap(), ".txt")
+            "2015-10-21",
+            filename_stem_for_date(NaiveDate::from_ymd_opt(2015, 10, 21).unwrap())
         );
     }
 }

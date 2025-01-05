@@ -67,11 +67,8 @@ impl OnDiskConfig {
 
     fn deserialize_extension<'a, D: Deserializer<'a>>(deserializer: D) -> Result<String, D::Error> {
         let ext: String = Deserialize::deserialize(deserializer)?;
-        if ext.starts_with('.') {
-            Ok(ext)
-        } else {
-            Ok(format!(".{ext}"))
-        }
+
+        Ok(ext.trim_start_matches('.').into())
     }
 
     fn deserialize_notes_root<'a, D: Deserializer<'a>>(
@@ -371,23 +368,23 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_extension_adds_dot_to_file_extension() {
+    fn deserialize_extension_removes_dot_to_file_extension() {
         let deserializer: StrDeserializer<'static, serde::de::value::Error> =
-            "md".into_deserializer();
+            ".md".into_deserializer();
         let extension = OnDiskConfig::deserialize_extension(deserializer)
             .expect("failed to deserialize extension");
 
-        assert_eq!(extension, ".md");
+        assert_eq!(extension, "md");
     }
 
     #[test]
-    fn deserialize_extension_preserves_dot_in_file_extension() {
+    fn deserialize_extension_preserves_lack_of_dot_in_file_extension() {
         let deserializer: StrDeserializer<'static, serde::de::value::Error> =
-            ".txt".into_deserializer();
+            "txt".into_deserializer();
         let extension = OnDiskConfig::deserialize_extension(deserializer)
             .expect("failed to deserialize extension");
 
-        assert_eq!(extension, ".txt");
+        assert_eq!(extension, "txt");
     }
 
     #[test]

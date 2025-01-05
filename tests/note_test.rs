@@ -18,7 +18,7 @@ fn test_time() -> DateTime<FixedOffset> {
 fn writes_notes_to_notes_directory() {
     let roots = testutil::setup_filesystem();
     let config = NoteConfig {
-        file_extension: ".txt".to_string(),
+        file_extension: "txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };
@@ -41,7 +41,7 @@ fn writes_notes_to_notes_directory() {
 fn writes_dailies_to_notes_directory() {
     let roots = testutil::setup_filesystem();
     let config = NoteConfig {
-        file_extension: ".txt".to_string(),
+        file_extension: "txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };
@@ -64,7 +64,7 @@ fn writes_dailies_to_notes_directory() {
 fn editing_an_existing_daily_alters_the_same_file() {
     let roots = testutil::setup_filesystem();
     let config = NoteConfig {
-        file_extension: ".txt".to_string(),
+        file_extension: "txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };
@@ -89,7 +89,7 @@ fn opening_two_notes_with_the_same_name_prevents_clobbering() {
     let roots = testutil::setup_filesystem();
 
     let config = NoteConfig {
-        file_extension: ".txt".to_string(),
+        file_extension: "txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };

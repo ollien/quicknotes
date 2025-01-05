@@ -57,7 +57,7 @@ fn indexes_existing_files_on_disk() {
     .expect("could not write note");
 
     let config = NoteConfig {
-        file_extension: ".txt".to_string(),
+        file_extension: "txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };
@@ -122,7 +122,7 @@ fn deleted_files_are_removed_from_the_index() {
     .expect("could not write note");
 
     let config = NoteConfig {
-        file_extension: ".txt".to_string(),
+        file_extension: "txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };
@@ -147,7 +147,7 @@ fn notes_are_added_to_the_index_when_they_are_created() {
     let roots = testutil::setup_filesystem();
 
     let config = NoteConfig {
-        file_extension: ".txt".to_string(),
+        file_extension: "txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };
@@ -214,7 +214,7 @@ fn opening_a_note_reindexes_it() {
     .expect("could not write note");
 
     let config = NoteConfig {
-        file_extension: ".txt".to_string(),
+        file_extension: "txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };
@@ -293,7 +293,7 @@ fn editing_a_note_to_have_an_invalid_preamble_removes_it_from_the_index() {
     .expect("could not write note");
 
     let config = NoteConfig {
-        file_extension: ".txt".to_string(),
+        file_extension: "txt".to_string(),
         root_dir: roots.note_root.path().to_owned(),
         temp_root_override: Some(roots.temp_root.path().to_owned()),
     };
