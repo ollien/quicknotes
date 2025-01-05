@@ -8,7 +8,7 @@ use note::{Preamble, SerializeError};
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io;
+use std::io::{self, Read};
 use std::{
     fs::{self, OpenOptions},
     path::{Path, PathBuf},
@@ -278,18 +278,17 @@ enum MakeNoteAtError {
     IndexOpenError(#[from] IndexOpenError),
 }
 
-fn store_note(tempfile: NamedTempFile, destination: &Path) -> Result<(), StoreNoteError> {
-    if destination.exists() {
-        let tempfile_path = tempfile.path().display().to_string();
-        try_preserve_note(tempfile)?;
+fn store_note(mut tempfile: NamedTempFile, destination: &Path) -> Result<(), StoreNoteError> {
+    match copy_to_destination(&mut tempfile, destination) {
+        Ok(()) => Ok(()),
 
-        return Err(StoreNoteError::NoteClobberPrevented { src: tempfile_path });
-    }
+        Err(CopyToDestinationError::DestinationExists) => {
+            let tempfile_path = tempfile.path().display().to_string();
+            try_preserve_note(tempfile)?;
+            Err(StoreNoteError::NoteClobberPrevented { src: tempfile_path })
+        }
 
-    // copy, don't use tempfile.persist as it does not work across filesystems
-    match std::fs::copy(tempfile.path(), destination) {
-        Ok(_bytes) => Ok(()),
-        Err(err) => {
+        Err(CopyToDestinationError::IOError(err)) => {
             let tempfile_path = tempfile.path().display().to_string();
             try_preserve_note(tempfile)?;
 
@@ -311,6 +310,33 @@ enum StoreNoteError {
 
     #[error(transparent)]
     TryPreserveNoteError(#[from] TryPreserveNoteError),
+}
+
+fn copy_to_destination<R: Read>(mut read: R, path: &Path) -> Result<(), CopyToDestinationError> {
+    let mut destination_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|err| {
+            if err.kind() == io::ErrorKind::AlreadyExists {
+                CopyToDestinationError::DestinationExists
+            } else {
+                CopyToDestinationError::IOError(err)
+            }
+        })?;
+
+    io::copy(&mut read, &mut destination_file)?;
+
+    Ok(())
+}
+
+#[derive(Error, Debug)]
+enum CopyToDestinationError {
+    #[error("destination exists")]
+    DestinationExists,
+
+    #[error(transparent)]
+    IOError(#[from] io::Error),
 }
 
 fn make_tempfile(config: &NoteConfig) -> Result<NamedTempFile, io::Error> {
