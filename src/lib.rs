@@ -4,7 +4,9 @@
 use chrono::{DateTime, TimeZone};
 use index::{LookupError as IndexLookupError, OpenError as IndexOpenError};
 use io::Write;
+use itertools::Itertools;
 use note::{Preamble, SerializeError};
+use regex::Regex;
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::fs::File;
@@ -74,11 +76,16 @@ pub fn make_note<E: Editor, Tz: TimeZone>(
     creation_time: &DateTime<Tz>,
 ) -> Result<PathBuf, MakeNoteError> {
     let filename = note::filename_for_title(&title, &config.file_extension);
-    let destination_path = config.notes_directory_path().join(filename);
+    let written_path = make_note_in(
+        config,
+        editor,
+        title,
+        creation_time,
+        &config.notes_directory_path(),
+        &filename,
+    )?;
 
-    make_note_at(config, editor, title, creation_time, &destination_path)?;
-
-    Ok(destination_path)
+    Ok(written_path)
 }
 
 /// An error that occurred during a call to [`make_note`]. [errors section](`make_note#Errors`)
@@ -106,7 +113,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
     creation_time: &DateTime<Tz>,
 ) -> Result<PathBuf, MakeOrOpenDailyNoteError> {
     let filename = note::filename_for_date(creation_time.date_naive(), &config.file_extension);
-    let destination_path = config.daily_directory_path().join(filename);
+    let destination_path = config.daily_directory_path().join(&filename);
     let destination_exists = ensure_note_exists(&destination_path)
         .map(|()| true)
         .or_else(|err| {
@@ -126,16 +133,18 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
 
         Ok(destination_path)
     } else {
-        make_note_at(
+        // TODO: I do not like this for dailies because it technically means the filename could be different.
+        let actual_path = make_note_in(
             config,
             editor,
             creation_time.date_naive().format("%Y-%m-%d").to_string(),
             creation_time,
-            &destination_path,
+            &config.daily_directory_path(),
+            &filename,
         )
         .map_err(InnerMakeOrOpenDailyNoteError::from)?;
 
-        Ok(destination_path)
+        Ok(actual_path)
     }
 }
 
@@ -229,27 +238,29 @@ pub struct IndexedNotesError {
     inner: AllIndexedNotesError,
 }
 
-fn make_note_at<E: Editor, Tz: TimeZone>(
+fn make_note_in<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
     title: String,
     creation_time: &DateTime<Tz>,
-    destination_path: &Path,
-) -> Result<(), MakeNoteAtError> {
+    destination_dir: &Path,
+    preferred_filename: &str,
+) -> Result<PathBuf, MakeNoteAtError> {
     let tempfile = make_tempfile(config).map_err(MakeNoteAtError::CreateTempfileError)?;
     let preamble = Preamble::new(title, creation_time.fixed_offset());
 
     write_preamble(&preamble, tempfile.path())?;
     open_in_editor(editor, tempfile.path())?;
-    store_note(tempfile, destination_path).map_err(|err| MakeNoteAtError::StoreNoteError {
-        err,
-        destination: destination_path.display().to_string(),
-    })?;
+    let actual_destination_path = store_note_in(tempfile, destination_dir, preferred_filename)
+        .map_err(|err| MakeNoteAtError::StoreNoteInError {
+            err,
+            dir: destination_dir.display().to_string(),
+        })?;
 
     let mut index_connection = open_index_database(config)?;
-    index_note(&mut index_connection, destination_path)?;
+    index_note(&mut index_connection, &actual_destination_path)?;
 
-    Ok(())
+    Ok(actual_destination_path)
 }
 
 #[derive(Error, Debug)]
@@ -261,11 +272,11 @@ enum MakeNoteAtError {
     #[error("could not write preamble to file: {0}")]
     WritePreambleError(#[from] WritePreambleError),
 
-    #[error("could not store note at {destination:?}: {err}")]
-    StoreNoteError {
-        destination: String,
+    #[error("could not store note in {dir:?}: {err}")]
+    StoreNoteInError {
+        dir: String,
         #[source]
-        err: StoreNoteError,
+        err: StoreNoteInError,
     },
 
     #[error(transparent)]
@@ -278,35 +289,71 @@ enum MakeNoteAtError {
     IndexOpenError(#[from] IndexOpenError),
 }
 
-fn store_note(mut tempfile: NamedTempFile, destination: &Path) -> Result<(), StoreNoteError> {
-    match copy_to_destination(&mut tempfile, destination) {
-        Ok(()) => Ok(()),
+fn store_note_in(
+    mut tempfile: NamedTempFile,
+    storage_dir: &Path,
+    preferred_filename: &str,
+) -> Result<PathBuf, StoreNoteInError> {
+    let mut destination = storage_dir.join(preferred_filename);
 
-        Err(CopyToDestinationError::DestinationExists) => {
-            let tempfile_path = tempfile.path().display().to_string();
-            try_preserve_note(tempfile)?;
-            Err(StoreNoteError::NoteClobberPrevented { src: tempfile_path })
-        }
+    // This is a loop to prevent the race where we generate a new filename and
+    // something else inserts it quickly. It is technically possible this loops
+    // forever, but it is extremely unlikely.
+    loop {
+        match copy_to_destination(&mut tempfile, &destination) {
+            Ok(()) => return Ok(destination),
 
-        Err(CopyToDestinationError::IOError(err)) => {
-            let tempfile_path = tempfile.path().display().to_string();
-            try_preserve_note(tempfile)?;
+            Err(CopyToDestinationError::IOError(err)) => {
+                let tempfile_path = tempfile.path().display().to_string();
+                try_preserve_note(tempfile)?;
 
-            Err(StoreNoteError::CopyError {
-                err,
-                src: tempfile_path,
-            })
+                return Err(StoreNoteInError::CopyError {
+                    err,
+                    src: tempfile_path,
+                });
+            }
+
+            Err(CopyToDestinationError::DestinationExists) => {
+                warning!(
+                    "Note already exists at {}, generating new filename...",
+                    destination.display()
+                );
+
+                match generate_unclobbered_destination(&destination) {
+                    Ok(new_destination) => {
+                        // Loop, and try to store
+                        destination = new_destination;
+                    }
+
+                    Err(err) => {
+                        let tempfile_path = tempfile.path().display().to_string();
+                        try_preserve_note(tempfile)?;
+
+                        return Err(StoreNoteInError::NoteClobberPreventionError {
+                            err,
+                            src: tempfile_path,
+                        });
+                    }
+                }
+            }
         }
     }
 }
 
 #[derive(Error, Debug)]
-enum StoreNoteError {
+enum StoreNoteInError {
     #[error("it still exists at {src:?}: {err}")]
-    CopyError { src: String, err: io::Error },
+    CopyError {
+        src: String,
+        #[source]
+        err: io::Error,
+    },
 
-    #[error("file exists with the same name; it still exists at {src:?}")]
-    NoteClobberPrevented { src: String },
+    #[error("file exists with the same name, and could not generate new filename for note. It still exists at {src}: {err}")]
+    NoteClobberPreventionError {
+        src: String,
+        err: GenerateUnclobberedDestinationError,
+    },
 
     #[error(transparent)]
     TryPreserveNoteError(#[from] TryPreserveNoteError),
@@ -337,6 +384,77 @@ enum CopyToDestinationError {
 
     #[error(transparent)]
     IOError(#[from] io::Error),
+}
+
+fn generate_unclobbered_destination(
+    path: &Path,
+) -> Result<PathBuf, GenerateUnclobberedDestinationError> {
+    // These were already both generated from rust strings, so must be UTF-8
+    let stem = path
+        .file_stem()
+        .expect("path is already a full filename")
+        .to_str()
+        .expect("filename must be UTF-8");
+
+    let extension = path
+        .extension()
+        .expect("path is already a full filename")
+        .to_str()
+        .expect("file extension must be UTF-8");
+
+    let dir = path.parent().expect("path is already a full path");
+    let destination = find_next_destination_basename(dir, stem, extension)
+        .map(|basename| path.with_file_name(basename))?;
+
+    Ok(destination)
+}
+
+#[derive(Error, Debug)]
+#[error("could not generate new filename for note: {0}")]
+struct GenerateUnclobberedDestinationError(#[from] FindNextDestinationBasenameError);
+
+fn find_next_destination_basename(
+    dir: &Path,
+    stem: &str,
+    extension: &str,
+) -> Result<String, FindNextDestinationBasenameError> {
+    let pattern = Regex::new(&format!(
+        r"{}-(\d+).{}",
+        regex::escape(stem),
+        regex::escape(extension)
+    ))
+    .unwrap();
+
+    let r = fs::read_dir(dir).map_err(FindNextDestinationBasenameError::ReadDirError)?;
+    let suffix_num = r
+        .filter_map_ok(|entry| {
+            let raw_file_name = entry.file_name();
+            let file_name = raw_file_name.to_str()?;
+            let captured_suffix = pattern.captures(file_name).and_then(|captures| {
+                captures
+                    .iter()
+                    .nth(1)
+                    .expect("pattern must have one capture group")
+            });
+
+            captured_suffix.map(|suffix| {
+                suffix
+                    .as_str()
+                    .parse::<u32>()
+                    .expect("pattern must guarantee we have a number")
+            })
+        })
+        .try_fold(0, |acc, n_result| n_result.map(|n| acc.max(n)))
+        .map(|max| max + 1)
+        .map_err(FindNextDestinationBasenameError::ReadDirError)?;
+
+    Ok(format!("{stem}-{suffix_num}.{extension}"))
+}
+
+#[derive(Error, Debug)]
+enum FindNextDestinationBasenameError {
+    #[error("could not read directory contents: {0}")]
+    ReadDirError(io::Error),
 }
 
 fn make_tempfile(config: &NoteConfig) -> Result<NamedTempFile, io::Error> {

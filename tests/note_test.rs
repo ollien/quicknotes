@@ -108,8 +108,16 @@ fn opening_two_notes_with_the_same_name_prevents_clobbering() {
     let second_note_result =
         quicknotes::make_note(&config, editor, "my cool note".to_string(), &test_time());
 
-    assert!(second_note_result.is_err());
+    let upd_note_path = second_note_result.expect("failed to write note");
 
-    let upd_note_contents = fs::read_to_string(&note_path).expect("failed to open note");
-    assert_eq!(upd_note_contents, original_note_contents);
+    let upd_original_location_contents =
+        fs::read_to_string(&note_path).expect("failed to open note");
+
+    assert_eq!(
+        upd_original_location_contents, original_note_contents,
+        "original note contents changed"
+    );
+
+    let upd_note_contents = fs::read_to_string(&upd_note_path).expect("failed to open note");
+    insta::assert_snapshot!(upd_note_contents);
 }
