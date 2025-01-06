@@ -8,7 +8,7 @@ use directories::{ProjectDirs, UserDirs};
 use itertools::Itertools;
 use nucleo_picker::nucleo::pattern::CaseMatching;
 use nucleo_picker::{Picker, PickerOptions, Render};
-use quicknotes::{open_note, CommandEditor, NoteConfig, NotePreamble};
+use quicknotes::{open_note, CommandEditor, IndexedNote, NoteConfig};
 use serde::{de, Deserialize, Deserializer};
 use serde_derive::{Deserialize, Serialize};
 use std::error::Error;
@@ -22,18 +22,18 @@ trait UnwrapOrExit<T> {
     fn unwrap_or_exit(self, msg: &str) -> T;
 }
 
-struct IndexedNote {
+struct IndexEntry {
     path: PathBuf,
-    preamble: NotePreamble,
+    note: IndexedNote,
 }
 
 struct IndexedNoteRenderer;
 
-impl Render<IndexedNote> for IndexedNoteRenderer {
+impl Render<IndexEntry> for IndexedNoteRenderer {
     type Str<'a> = &'a str;
 
-    fn render<'a>(&self, note: &'a IndexedNote) -> Self::Str<'a> {
-        &note.preamble.title
+    fn render<'a>(&self, entry: &'a IndexEntry) -> Self::Str<'a> {
+        &entry.note.preamble.title
     }
 }
 
@@ -172,13 +172,13 @@ fn run_open(config: &NoteConfig, editor: &CommandEditor) {
 
     indexed_notes
         .into_iter()
-        .map(|(path, preamble)| IndexedNote { path, preamble })
+        .map(|(path, note)| IndexEntry { path, note })
         .for_each(|note| {
             picker_injector.push(note);
         });
 
     if let Some(selected_note) = pick(&mut picker).unwrap_or_exit("could not launch picker") {
-        open_note(config, editor, &selected_note.path)
+        open_note(config, editor, selected_note.note.kind, &selected_note.path)
             .unwrap_or_exit("could not open selected file");
     }
 }

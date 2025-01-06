@@ -18,6 +18,7 @@ use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
 pub use edit::{CommandEditor, Editor};
+pub use index::{IndexedNote, NoteKind};
 pub use note::Preamble as NotePreamble;
 
 mod edit;
@@ -81,7 +82,8 @@ pub fn make_note<E: Editor, Tz: TimeZone>(
         file_extension: config.file_extension.clone(),
     };
 
-    let written_path = make_note_with_store(config, store, editor, title, creation_time)?;
+    let written_path =
+        make_note_with_store(config, store, editor, title, creation_time, NoteKind::Note)?;
 
     Ok(written_path)
 }
@@ -130,7 +132,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
         })?;
 
     if destination_exists {
-        open_existing_note_in_editor(config, editor, &destination_path)
+        open_existing_note_in_editor(config, editor, NoteKind::Daily, &destination_path)
             .map_err(InnerMakeOrOpenDailyNoteError::from)?;
 
         Ok(destination_path)
@@ -153,6 +155,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
             editor,
             creation_time.date_naive().format("%Y-%m-%d").to_string(),
             creation_time,
+            NoteKind::Daily,
         )
         .map_err(InnerMakeOrOpenDailyNoteError::from)?;
 
@@ -194,9 +197,10 @@ enum InnerMakeOrOpenDailyNoteError {
 pub fn open_note<E: Editor>(
     config: &NoteConfig,
     editor: E,
+    kind: NoteKind,
     path: &Path,
 ) -> Result<(), OpenNoteError> {
-    open_existing_note(config, editor, path)?;
+    open_existing_note(config, editor, kind, path)?;
 
     Ok(())
 }
@@ -237,7 +241,9 @@ pub struct IndexNotesError {
 /// # Errors
 ///
 /// Returns an error if there was a problem opening or reading from the index.
-pub fn indexed_notes(config: &NoteConfig) -> Result<HashMap<PathBuf, Preamble>, IndexedNotesError> {
+pub fn indexed_notes(
+    config: &NoteConfig,
+) -> Result<HashMap<PathBuf, IndexedNote>, IndexedNotesError> {
     let notes = all_indexed_notes(config)?;
 
     Ok(notes)
@@ -256,6 +262,7 @@ fn make_note_with_store<E: Editor, Tz: TimeZone, S: StoreNote>(
     editor: E,
     title: String,
     creation_time: &DateTime<Tz>,
+    kind: NoteKind,
 ) -> Result<PathBuf, MakeNoteAtError> {
     let tempfile = make_tempfile(config).map_err(MakeNoteAtError::CreateTempfileError)?;
     let preamble = Preamble::new(title, creation_time.fixed_offset());
@@ -268,7 +275,7 @@ fn make_note_with_store<E: Editor, Tz: TimeZone, S: StoreNote>(
         .map_err(MakeNoteAtError::StoreNoteError)?;
 
     let mut index_connection = open_index_database(config)?;
-    index_note(&mut index_connection, &actual_destination_path)?;
+    index_note(&mut index_connection, kind, &actual_destination_path)?;
 
     Ok(actual_destination_path)
 }
@@ -329,10 +336,11 @@ enum WritePreambleError {
 fn open_existing_note<E: Editor>(
     config: &NoteConfig,
     editor: E,
+    kind: NoteKind,
     path: &Path,
 ) -> Result<(), OpenExistingNoteError> {
     ensure_note_exists(path).map_err(OpenExistingNoteError::LookupError)?;
-    open_existing_note_in_editor(config, editor, path)?;
+    open_existing_note_in_editor(config, editor, kind, path)?;
 
     Ok(())
 }
@@ -363,13 +371,14 @@ fn ensure_note_exists(path: &Path) -> Result<(), io::Error> {
 fn open_existing_note_in_editor<E: Editor>(
     config: &NoteConfig,
     editor: E,
+    kind: NoteKind,
     path: &Path,
 ) -> Result<(), OpenExistingNoteInEditorError> {
     open_in_editor(editor, path)?;
 
     let mut index_connection = open_index_database(config)?;
 
-    index_note(&mut index_connection, path)
+    index_note(&mut index_connection, kind, path)
         .or_else(|err| {
             let IndexNoteError::PreambleError(err) = err else {
                 return Err(err)
@@ -425,8 +434,8 @@ fn index_all_notes(config: &NoteConfig) -> Result<(), IndexAllNotesError> {
     reset_index_database(config)?;
     let mut connection = open_index_database(config)?;
 
-    for path in note_file_paths(config) {
-        if let Err(err) = index_note(&mut connection, &path) {
+    for (kind, path) in note_file_paths(config) {
+        if let Err(err) = index_note(&mut connection, kind, &path) {
             warning!("could not index note at {}: {}", path.display(), err);
         }
     }
@@ -445,7 +454,7 @@ enum IndexAllNotesError {
 
 fn all_indexed_notes(
     config: &NoteConfig,
-) -> Result<HashMap<PathBuf, Preamble>, AllIndexedNotesError> {
+) -> Result<HashMap<PathBuf, IndexedNote>, AllIndexedNotesError> {
     let mut connection = open_index_database(config)?;
     let notes = index::all_notes(&mut connection)?;
 
@@ -471,17 +480,22 @@ fn open_index_database(config: &NoteConfig) -> Result<Connection, IndexOpenError
 
 /// Get all note file paths in a best-effort fashion. If there is an error where some
 /// notes cannot be read, warnings will be logged.
-fn note_file_paths(config: &NoteConfig) -> impl Iterator<Item = PathBuf> {
+fn note_file_paths(config: &NoteConfig) -> impl Iterator<Item = (NoteKind, PathBuf)> {
     WalkDir::new(config.notes_directory_path())
         .into_iter()
-        .chain(WalkDir::new(config.daily_directory_path()))
-        .filter_map(|entry_res| {
+        .map(|entry| (NoteKind::Note, entry))
+        .chain(
+            WalkDir::new(config.daily_directory_path())
+                .into_iter()
+                .map(|entry| (NoteKind::Daily, entry)),
+        )
+        .filter_map(|(note_kind, entry_res)| {
             // skip entires we can't read, so we can get the rest
             unpack_walkdir_entry_result(entry_res)
                 .ok()
                 .and_then(|entry| {
                     let isnt_dir = !entry.file_type().is_dir();
-                    isnt_dir.then_some(entry.into_path())
+                    isnt_dir.then_some((note_kind, entry.into_path()))
                 })
         })
 }
@@ -507,11 +521,15 @@ fn unpack_walkdir_entry_result(
     }
 }
 
-fn index_note(index_connection: &mut Connection, path: &Path) -> Result<(), IndexNoteError> {
+fn index_note(
+    index_connection: &mut Connection,
+    kind: NoteKind,
+    path: &Path,
+) -> Result<(), IndexNoteError> {
     let mut file = File::open(path).map_err(IndexNoteError::OpenError)?;
     let preamble = note::extract_preamble(&mut file).map_err(IndexNoteError::PreambleError)?;
 
-    index::add_note(index_connection, &preamble, path).map_err(IndexNoteError::IndexError)
+    index::add_note(index_connection, &preamble, kind, path).map_err(IndexNoteError::IndexError)
 }
 
 #[derive(Error, Debug)]

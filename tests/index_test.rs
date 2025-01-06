@@ -1,6 +1,6 @@
 use chrono::{DateTime, FixedOffset, TimeZone};
 use itertools::Itertools;
-use quicknotes::NoteConfig;
+use quicknotes::{NoteConfig, NoteKind};
 use testutil::{AppendEditor, OverwriteEditor};
 
 mod testutil;
@@ -68,7 +68,7 @@ fn indexes_existing_files_on_disk() {
     assert_eq!(
         notes
             .into_iter()
-            .map(|(path, preamble)| (path, preamble.title))
+            .map(|(path, note)| (path, note.preamble.title))
             .sorted()
             .collect::<Vec<_>>(),
         vec![
@@ -136,7 +136,7 @@ fn deleted_files_are_removed_from_the_index() {
     assert_eq!(
         notes
             .into_iter()
-            .map(|(path, preamble)| (path, preamble.title))
+            .map(|(path, note)| (path, note.preamble.title))
             .collect::<Vec<_>>(),
         vec![(cool_note_path, "my cool note".to_string())]
     )
@@ -164,7 +164,7 @@ fn notes_are_added_to_the_index_when_they_are_created() {
     assert_eq!(
         notes
             .into_iter()
-            .map(|(path, preamble)| (path, preamble.title))
+            .map(|(path, note)| (path, note.preamble.title))
             .collect::<Vec<_>>(),
         vec![(cool_note_path, "my cool note".to_string())]
     )
@@ -231,15 +231,20 @@ fn opening_a_note_reindexes_it() {
         .trim_start_matches("\n"),
     ));
 
-    quicknotes::open_note(&config, &overwrite_editor, &awesome_note_path)
-        .expect("could not open note for editing");
+    quicknotes::open_note(
+        &config,
+        &overwrite_editor,
+        NoteKind::Note,
+        &awesome_note_path,
+    )
+    .expect("could not open note for editing");
 
     let notes = quicknotes::indexed_notes(&config).expect("could not read indexed notes");
 
     assert_eq!(
         notes
             .into_iter()
-            .map(|(path, preamble)| (path, preamble.title))
+            .map(|(path, note)| (path, note.preamble.title))
             .sorted()
             .collect::<Vec<_>>(),
         vec![
@@ -308,16 +313,86 @@ fn editing_a_note_to_have_an_invalid_preamble_removes_it_from_the_index() {
         .trim_start_matches("\n"),
     ));
 
-    quicknotes::open_note(&config, &overwrite_editor, &awesome_note_path)
-        .expect("could not open note for editing");
+    quicknotes::open_note(
+        &config,
+        &overwrite_editor,
+        NoteKind::Note,
+        &awesome_note_path,
+    )
+    .expect("could not open note for editing");
 
     let notes = quicknotes::indexed_notes(&config).expect("could not read indexed notes");
 
     assert_eq!(
         notes
             .into_iter()
-            .map(|(path, preamble)| (path, preamble.title))
+            .map(|(path, note)| (path, note.preamble.title))
             .collect::<Vec<_>>(),
         vec![(cool_note_path, "my cool note".to_string()),]
+    )
+}
+
+#[test]
+fn daily_notes_are_marked_with_daily_kind() {
+    let roots = testutil::setup_filesystem();
+
+    let config = NoteConfig {
+        file_extension: "txt".to_string(),
+        root_dir: roots.note_root.path().to_owned(),
+        temp_root_override: Some(roots.temp_root.path().to_owned()),
+    };
+
+    let mut append_editor = AppendEditor::new();
+    append_editor.note_contents("today was a cool day\n".to_string());
+
+    quicknotes::make_or_open_daily(&config, &append_editor, &test_time())
+        .expect("could not open note for editing");
+
+    let notes = quicknotes::indexed_notes(&config).expect("could not read indexed notes");
+    let daily_note_path = roots.note_root.path().join("daily").join("2015-10-21.txt");
+
+    assert_eq!(
+        notes
+            .into_iter()
+            .map(|(path, note)| (path, note.kind))
+            .collect::<Vec<_>>(),
+        vec![(daily_note_path, NoteKind::Daily),]
+    )
+}
+
+#[test]
+fn regular_notes_are_marked_with_notes_kind() {
+    let roots = testutil::setup_filesystem();
+
+    let config = NoteConfig {
+        file_extension: "txt".to_string(),
+        root_dir: roots.note_root.path().to_owned(),
+        temp_root_override: Some(roots.temp_root.path().to_owned()),
+    };
+
+    let mut append_editor = AppendEditor::new();
+    append_editor.note_contents("today was a cool day\n".to_string());
+
+    quicknotes::make_note(
+        &config,
+        &append_editor,
+        "my cool note".to_string(),
+        &test_time(),
+    )
+    .expect("could not open note for editing");
+
+    let notes = quicknotes::indexed_notes(&config).expect("could not read indexed notes");
+    let daily_note_path = roots
+        .note_root
+        .path()
+        .join("notes")
+        .join("my-cool-note.txt");
+
+    assert_eq!(
+        notes
+            .into_iter()
+            .map(|(path, note)| (path, note.kind))
+            .collect::<Vec<_>>(),
+        vec![(daily_note_path, NoteKind::Note),]
     )
 }

@@ -15,6 +15,39 @@ use crate::{note::Preamble, warning};
 
 const DB_DATE_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.f";
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IndexedNote {
+    pub preamble: Preamble,
+    pub kind: NoteKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteKind {
+    Note,
+    Daily,
+}
+
+impl NoteKind {
+    fn to_sql_enum(self) -> String {
+        match self {
+            Self::Note => "note".to_string(),
+            Self::Daily => "daily".to_string(),
+        }
+    }
+
+    fn try_from_sql_enum(sql_enum: &str) -> Result<Self, InvalidNoteKindString> {
+        match sql_enum {
+            "note" => Ok(Self::Note),
+            "daily" => Ok(Self::Daily),
+            _ => Err(InvalidNoteKindString(sql_enum.to_owned())),
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+#[error("invalid note kind '{0}'")]
+struct InvalidNoteKindString(String);
+
 pub fn open(path: &Path) -> Result<Connection, OpenError> {
     let mut connection = Connection::open(path).map_err(OpenError::ConnectionOpenError)?;
 
@@ -58,6 +91,7 @@ pub struct ResetError(io::Error);
 pub fn add_note(
     connection: &mut Connection,
     preamble: &Preamble,
+    kind: NoteKind,
     path: &Path,
 ) -> Result<(), InsertError> {
     let path_string = path
@@ -66,17 +100,19 @@ pub fn add_note(
 
     connection
         .execute(
-            "INSERT INTO notes VALUES (?1, ?2, ?3, ?4)
+            "INSERT INTO notes VALUES (?1, ?2, ?3, ?4, ?5)
                 ON CONFLICT(filepath) DO UPDATE SET
                     title=?2,
                     created_at=?3,
-                    utc_offset_seconds=?4
+                    utc_offset_seconds=?4,
+                    kind=?5
             ;",
             (
                 &path_string,
                 &preamble.title,
                 preamble.created_at.format(DB_DATE_FORMAT).to_string(),
                 preamble.created_at.offset().local_minus_utc(),
+                kind.to_sql_enum(),
             ),
         )
         .map(|_rows| ())
@@ -92,9 +128,11 @@ pub enum InsertError {
     BadPath(PathBuf),
 }
 
-pub fn all_notes(connection: &mut Connection) -> Result<HashMap<PathBuf, Preamble>, LookupError> {
-    let mut query =
-        connection.prepare("SELECT filepath, title, created_at, utc_offset_seconds FROM notes;")?;
+pub fn all_notes(
+    connection: &mut Connection,
+) -> Result<HashMap<PathBuf, IndexedNote>, LookupError> {
+    let mut query = connection
+        .prepare("SELECT filepath, title, created_at, utc_offset_seconds, kind FROM notes;")?;
 
     let notes = query
         .query_map([], |row| match unpack_row(row) {
@@ -143,16 +181,25 @@ fn setup_database(connection: &mut Connection) -> Result<(), MigrationError> {
     Ok(())
 }
 
-fn unpack_row(row: &Row) -> Result<(PathBuf, Preamble), QueryFailure> {
+fn unpack_row(row: &Row) -> Result<(PathBuf, IndexedNote), QueryFailure> {
     let raw_filepath: String = row.get(0)?;
     let title: String = row.get(1)?;
     let raw_created_at: String = row.get(2)?;
     let raw_utc_offset: i32 = row.get(3)?;
+    let raw_kind: String = row.get(4)?;
 
     let filepath = PathBuf::from_str(&raw_filepath).unwrap(); // infallible error type
     let created_at = datetime_from_database(&raw_created_at, raw_utc_offset)?;
+    let kind = NoteKind::try_from_sql_enum(&raw_kind)
+        .map_err(|err| QueryFailure::InvalidRow(err.to_string()))?;
 
-    Ok((filepath, Preamble { title, created_at }))
+    Ok((
+        filepath,
+        IndexedNote {
+            kind,
+            preamble: Preamble { title, created_at },
+        },
+    ))
 }
 
 fn datetime_from_database(
@@ -189,14 +236,37 @@ impl From<rusqlite::Error> for QueryFailure {
 }
 
 fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![M::up(
-        "CREATE TABLE notes (
-            filepath TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            created_at DATETIME NOT NULL,
-            utc_offset_seconds INTEGER NOT NULL
-        );",
-    )])
+    Migrations::new(vec![
+        M::up(
+            "CREATE TABLE notes (
+                filepath TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at DATETIME NOT NULL,
+                utc_offset_seconds INTEGER NOT NULL
+            );",
+        ),
+        // Add the notes column. This migration is imperfect, because it classifies everything as 'note',
+        // but given the index can be recreated, this is no big deal. Plus, I am the only one who used
+        // the version without this :)
+        M::up(
+            r"
+            CREATE TEMPORARY TABLE intermediate_notes AS
+                SELECT
+                    filepath, title, created_at, utc_offset_seconds, 'note'
+                FROM notes;
+            DROP TABLE notes;
+            CREATE TABLE notes (
+                filepath TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at DATETIME NOT NULL,
+                utc_offset_seconds INTEGER NOT NULL,
+                kind CHECK (kind IN ('note', 'daily')) NOT NULL
+            );
+            INSERT INTO notes SELECT * FROM intermediate_notes;
+            DROP TABLE intermediate_notes;
+        ",
+        ),
+    ])
 }
 
 #[cfg(test)]
@@ -231,6 +301,7 @@ mod tests {
         add_note(
             &mut connection,
             &preamble,
+            NoteKind::Note,
             &PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/hello-world.txt").unwrap(),
         )
         .unwrap();
@@ -259,6 +330,7 @@ mod tests {
         add_note(
             &mut connection,
             &preamble1,
+            NoteKind::Note,
             &PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/hello-world.txt").unwrap(),
         )
         .unwrap();
@@ -267,6 +339,7 @@ mod tests {
         add_note(
             &mut connection,
             &preamble2,
+            NoteKind::Note,
             &PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/hello-world.txt").unwrap(),
         )
         .expect("Failed to update note");
@@ -282,7 +355,10 @@ mod tests {
             [(
                 PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/hello-world.txt")
                     .unwrap(),
-                preamble2
+                IndexedNote {
+                    preamble: preamble2,
+                    kind: NoteKind::Note
+                }
             )]
         );
     }
@@ -319,7 +395,7 @@ mod tests {
         #[cfg(not(any(unix, windows)))]
         panic!("Cannot run test on neither windows or unix");
 
-        let insert_result = add_note(&mut connection, &preamble, &path);
+        let insert_result = add_note(&mut connection, &preamble, NoteKind::Note, &path);
 
         assert!(insert_result.is_err());
     }
@@ -341,6 +417,7 @@ mod tests {
         add_note(
             &mut connection,
             &preamble1,
+            NoteKind::Note,
             &PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/hello-world.txt").unwrap(),
         )
         .unwrap();
@@ -357,6 +434,7 @@ mod tests {
         add_note(
             &mut connection,
             &preamble2,
+            NoteKind::Note,
             &PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/notes-notes-notes.txt")
                 .unwrap(),
         )
@@ -369,7 +447,10 @@ mod tests {
                 &PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/hello-world.txt")
                     .unwrap(),
             ),
-            Some(&preamble1)
+            Some(&IndexedNote {
+                preamble: preamble1,
+                kind: NoteKind::Note
+            })
         );
 
         assert_eq!(
@@ -377,7 +458,10 @@ mod tests {
                 &PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/notes-notes-notes.txt")
                     .unwrap(),
             ),
-            Some(&preamble2)
+            Some(&IndexedNote {
+                preamble: preamble2,
+                kind: NoteKind::Note
+            })
         );
     }
 
@@ -398,6 +482,7 @@ mod tests {
         add_note(
             &mut connection,
             &valid_note_preamble,
+            NoteKind::Note,
             &PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/this-note-is-valid.txt")
                 .unwrap(),
         )
@@ -409,7 +494,8 @@ mod tests {
                     "/home/ferris/Documents/quicknotes/notes/this-note-is-not-valid.txt",
                     "This note is not valid",
                     "malformed timestamp",
-                    0
+                    0,
+                    'note'
                 )"#,
                 [],
             )
@@ -426,7 +512,10 @@ mod tests {
             [(
                 PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/this-note-is-valid.txt")
                     .unwrap(),
-                valid_note_preamble
+                IndexedNote {
+                    preamble: valid_note_preamble,
+                    kind: NoteKind::Note
+                }
             )]
         );
     }
@@ -451,7 +540,8 @@ mod tests {
                     "/home/ferris/Documents/quicknotes/notes/my-cool-note.txt",
                     "Hello, world!",
                     "2015-10-22T07:28:00.000",
-                    0
+                    0,
+                    'note'
                 )"#,
                 [],
             )
