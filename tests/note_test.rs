@@ -2,7 +2,7 @@ use std::fs::{self, OpenOptions};
 
 use chrono::{DateTime, FixedOffset, TimeZone};
 use quicknotes::NoteConfig;
-use testutil::AppendEditor;
+use testutil::{AppendEditor, SwappingEditor};
 
 mod testutil;
 
@@ -57,6 +57,30 @@ fn writes_dailies_to_notes_directory() {
     assert_eq!(stored_path, expected_note_path);
     let note_contents = fs::read_to_string(expected_note_path).expect("failed to open note");
 
+    insta::assert_snapshot!(note_contents);
+}
+
+#[test]
+fn writes_notes_to_notes_directory_even_if_inode_changes() {
+    let roots = testutil::setup_filesystem();
+    let config = NoteConfig {
+        file_extension: "txt".to_string(),
+        root_dir: roots.note_root.path().to_owned(),
+        temp_root_override: Some(roots.temp_root.path().to_owned()),
+    };
+
+    let mut append_editor = AppendEditor::new();
+    append_editor.note_contents("hello, world!\n".to_string());
+    let editor = SwappingEditor::new(append_editor);
+
+    let stored_path =
+        quicknotes::make_note(&config, editor, "my cool note".to_string(), &test_time())
+            .expect("could not write note");
+
+    let expected_note_path = roots.note_root.path().join("notes/my-cool-note.txt");
+    assert_eq!(stored_path, expected_note_path);
+
+    let note_contents = fs::read_to_string(expected_note_path).expect("failed to open note");
     insta::assert_snapshot!(note_contents);
 }
 

@@ -1,11 +1,11 @@
 // each test file is its own crate, so just because something is used in one place doesn't make it dead
 #![allow(dead_code)]
 
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 
 use quicknotes::Editor;
-use tempfile::{tempdir, TempDir};
+use tempfile::{tempdir, NamedTempFile, TempDir};
 
 pub struct FilesystemRoots {
     pub note_root: TempDir,
@@ -29,7 +29,7 @@ impl AppendEditor {
 
 impl Editor for AppendEditor {
     fn name(&self) -> &str {
-        "test_dir"
+        "test_append_editor"
     }
 
     fn edit(&self, path: &std::path::Path) -> std::io::Result<()> {
@@ -62,7 +62,7 @@ impl OverwriteEditor {
 
 impl Editor for OverwriteEditor {
     fn name(&self) -> &str {
-        "test_dir"
+        "test_overwrite_editor"
     }
 
     fn edit(&self, path: &std::path::Path) -> std::io::Result<()> {
@@ -75,6 +75,34 @@ impl Editor for OverwriteEditor {
 
             write!(file, "{to_insert}")?;
         }
+
+        Ok(())
+    }
+}
+
+pub struct SwappingEditor<E> {
+    inner: E,
+}
+
+impl<E: Editor> SwappingEditor<E> {
+    pub fn new(editor: E) -> Self {
+        Self { inner: editor }
+    }
+}
+
+impl<E: Editor> Editor for SwappingEditor<E> {
+    fn name(&self) -> &str {
+        "test_swapping_editor"
+    }
+
+    fn edit(&self, path: &std::path::Path) -> std::io::Result<()> {
+        // Emulate something like vim, which will move the file into place. This breaks
+        // implementations that depend on the original tempfiles inode
+        let swap_path = NamedTempFile::new()?.into_temp_path();
+        fs::copy(path, &swap_path)?;
+        self.inner.edit(&swap_path)?;
+        fs::rename(&swap_path, path)?;
+        swap_path.keep()?;
 
         Ok(())
     }

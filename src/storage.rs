@@ -1,11 +1,11 @@
 use itertools::Itertools;
 use regex::Regex;
 use std::{
-    fs::{self, OpenOptions},
-    io::{self, Read},
+    fs::{self, File, OpenOptions},
+    io,
     path::{Path, PathBuf},
 };
-use tempfile::NamedTempFile;
+use tempfile::TempPath;
 use thiserror::Error;
 
 use crate::warning;
@@ -13,7 +13,7 @@ use crate::warning;
 /// Stores the given tempfile into a storage medium. This trait can not be implemented
 /// by other modules, in order to avoid heap allocations for handling the error.
 pub trait StoreNote: sealed::StoreNote {
-    fn store(self, tempfile: NamedTempFile) -> Result<PathBuf, StoreNoteError>;
+    fn store(self, tempfile: TempPath) -> Result<PathBuf, StoreNoteError>;
 }
 
 #[derive(Error, Debug)]
@@ -51,19 +51,19 @@ pub struct StoreNoteIn {
 }
 
 impl StoreNote for StoreNoteAt {
-    fn store(self, tempfile: NamedTempFile) -> Result<PathBuf, StoreNoteError> {
+    fn store(self, tempfile: TempPath) -> Result<PathBuf, StoreNoteError> {
         self.do_store(tempfile)
             .map_err(|err| StoreNoteError { inner: err.into() })
     }
 }
 
 impl StoreNoteAt {
-    fn do_store(self, mut tempfile: NamedTempFile) -> Result<PathBuf, StoreNoteAtError> {
-        match copy_to_destination(&mut tempfile, &self.destination) {
+    fn do_store(self, tempfile: TempPath) -> Result<PathBuf, StoreNoteAtError> {
+        match copy_to_destination(&tempfile, &self.destination) {
             Ok(()) => Ok(self.destination),
 
             Err(err) => {
-                let tempfile_path = tempfile.path().display().to_string();
+                let tempfile_path = tempfile.display().to_string();
                 try_preserve_note(tempfile)?;
 
                 Err(StoreNoteAtError::CopyError {
@@ -91,14 +91,14 @@ enum StoreNoteAtError {
 }
 
 impl StoreNote for StoreNoteIn {
-    fn store(self, tempfile: NamedTempFile) -> Result<PathBuf, StoreNoteError> {
+    fn store(self, tempfile: TempPath) -> Result<PathBuf, StoreNoteError> {
         self.do_store(tempfile)
             .map_err(|err| StoreNoteError { inner: err.into() })
     }
 }
 
 impl StoreNoteIn {
-    fn do_store(self, mut tempfile: NamedTempFile) -> Result<PathBuf, StoreNoteInError> {
+    fn do_store(self, mut tempfile: TempPath) -> Result<PathBuf, StoreNoteInError> {
         let mut destination = self
             .storage_directory
             .join(self.preferred_file_stem)
@@ -126,7 +126,7 @@ impl StoreNoteIn {
                         }
 
                         Err(err) => {
-                            let tempfile_path = tempfile.path().display().to_string();
+                            let tempfile_path = tempfile.display().to_string();
                             try_preserve_note(tempfile)?;
 
                             return Err(StoreNoteInError::NoteClobberPreventionError {
@@ -139,7 +139,7 @@ impl StoreNoteIn {
                 }
 
                 Err(err) => {
-                    let tempfile_path = tempfile.path().display().to_string();
+                    let tempfile_path = tempfile.display().to_string();
                     try_preserve_note(tempfile)?;
 
                     return Err(StoreNoteInError::CopyError {
@@ -174,14 +174,15 @@ enum StoreNoteInError {
     TryPreserveNoteError(#[from] TryPreserveNoteError),
 }
 
-fn copy_to_destination<R: Read>(mut read: R, path: &Path) -> Result<(), CopyToDestinationError> {
+fn copy_to_destination(from: &Path, to: &Path) -> Result<(), CopyToDestinationError> {
+    let mut src_file = File::open(from).map_err(CopyToDestinationError::FileSetupError)?;
     let mut destination_file = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(path)
+        .open(to)
         .map_err(CopyToDestinationError::FileSetupError)?;
 
-    io::copy(&mut read, &mut destination_file).map_err(CopyToDestinationError::CopyError)?;
+    io::copy(&mut src_file, &mut destination_file).map_err(CopyToDestinationError::CopyError)?;
 
     Ok(())
 }
@@ -214,13 +215,13 @@ impl CopyToDestinationError {
     }
 }
 
-fn try_preserve_note(tempfile: NamedTempFile) -> Result<(), TryPreserveNoteError> {
+fn try_preserve_note(tempfile: TempPath) -> Result<(), TryPreserveNoteError> {
     // Store the path in case the keep operation fails somehow
-    let tempfile_path = tempfile.path().to_path_buf();
+    let tempfile_path = tempfile.to_path_buf();
 
     match tempfile.keep() {
         Ok(_result) => Ok(()),
-        Err(tempfile::PersistError {
+        Err(tempfile::PathPersistError {
             error: keep_error, ..
         }) => match fs::read_to_string(tempfile_path) {
             Ok(contents) => {

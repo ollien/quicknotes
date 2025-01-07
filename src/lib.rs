@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use storage::{StoreNote, StoreNoteAt, StoreNoteError, StoreNoteIn};
-use tempfile::{Builder as TempFileBuilder, NamedTempFile};
+use tempfile::{Builder as TempFileBuilder, NamedTempFile, TempPath};
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
 
@@ -267,8 +267,8 @@ fn make_note_with_store<E: Editor, Tz: TimeZone, S: StoreNote>(
     let tempfile = make_tempfile(config).map_err(MakeNoteAtError::CreateTempfileError)?;
     let preamble = Preamble::new(title, creation_time.fixed_offset());
 
-    write_preamble(&preamble, tempfile.path())?;
-    open_in_editor(editor, tempfile.path())?;
+    write_preamble(&preamble, &tempfile)?;
+    open_in_editor(editor, &tempfile)?;
 
     let actual_destination_path = store
         .store(tempfile)
@@ -302,14 +302,16 @@ enum MakeNoteAtError {
     IndexOpenError(#[from] IndexOpenError),
 }
 
-fn make_tempfile(config: &NoteConfig) -> Result<NamedTempFile, io::Error> {
+fn make_tempfile(config: &NoteConfig) -> Result<TempPath, io::Error> {
     let mut builder = TempFileBuilder::new();
     let builder = builder.suffix(&config.file_extension);
 
     if let Some(temp_dir) = config.temp_root_override.as_ref() {
-        builder.tempfile_in(temp_dir)
+        builder
+            .tempfile_in(temp_dir)
+            .map(NamedTempFile::into_temp_path)
     } else {
-        builder.tempfile()
+        builder.tempfile().map(NamedTempFile::into_temp_path)
     }
 }
 
