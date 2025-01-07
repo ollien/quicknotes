@@ -108,7 +108,7 @@ impl StoreNoteIn {
         // something else inserts it quickly. It is technically possible this loops
         // forever, but it is extremely unlikely.
         loop {
-            match copy_to_destination(&mut tempfile, &destination) {
+            match copy_to_destination(&tempfile, &destination) {
                 Ok(()) => return Ok(destination),
 
                 Err(err @ CopyToDestinationError::FileSetupError(..))
