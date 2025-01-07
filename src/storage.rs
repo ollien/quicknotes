@@ -98,7 +98,7 @@ impl StoreNote for StoreNoteIn {
 }
 
 impl StoreNoteIn {
-    fn do_store(self, mut tempfile: TempPath) -> Result<PathBuf, StoreNoteInError> {
+    fn do_store(self, tempfile: TempPath) -> Result<PathBuf, StoreNoteInError> {
         let mut destination = self
             .storage_directory
             .join(self.preferred_file_stem)
