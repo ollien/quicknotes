@@ -267,7 +267,7 @@ pub fn store_if_different<S: StoreNote>(
 
 #[derive(Error, Debug)]
 pub enum StoreIfDifferentError {
-    #[error("{err}")]
+    #[error("could not check note before storing it; it still exists at {path}: {err}")]
     CheckFileError {
         path: PathBuf,
 

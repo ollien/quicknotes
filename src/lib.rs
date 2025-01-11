@@ -7,20 +7,20 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, TimeZone};
-pub use edit::{CommandEditor, Editor};
-pub use index::{IndexedNote, NoteKind};
 use index::{LookupError as IndexLookupError, OpenError as IndexOpenError};
 use io::Write;
-pub use note::Preamble as NotePreamble;
 use note::{Preamble, SerializeError};
 use rusqlite::Connection;
 use storage::{
-    store_if_different, StoreIfDifferentError, StoreNote, StoreNoteAt, StoreNoteError, StoreNoteIn,
-    TempFileHandle,
+    store_if_different, StoreIfDifferentError, StoreNote, StoreNoteAt, StoreNoteIn, TempFileHandle,
 };
 use tempfile::{Builder as TempFileBuilder, NamedTempFile, TempPath};
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
+
+pub use edit::{CommandEditor, Editor};
+pub use index::{IndexedNote, NoteKind};
+pub use note::Preamble as NotePreamble;
 
 mod edit;
 mod index;
@@ -300,13 +300,7 @@ fn make_note_with_store<E: Editor, Tz: TimeZone, S: StoreNote>(
     open_in_editor(editor, &tempfile)?;
 
     let handle = TempFileHandle::open(tempfile).map_err(MakeNoteAtError::OpenNoteError)?;
-    let maybe_actual_path =
-        store_if_different(store, handle, &serialized_preamble).map_err(|err| match err {
-            StoreIfDifferentError::CheckFileError { path, err } => {
-                MakeNoteAtError::CheckNoteError { path, err }
-            }
-            StoreIfDifferentError::StoreNoteError(err) => MakeNoteAtError::StoreNoteError(err),
-        })?;
+    let maybe_actual_path = store_if_different(store, handle, &serialized_preamble)?;
 
     match maybe_actual_path {
         Some(actual_destination_path) => {
@@ -332,16 +326,8 @@ enum MakeNoteAtError {
     #[error("could not open note for storage: {0}")]
     OpenNoteError(io::Error),
 
-    #[error("could not check note before storing it; it still exists at {path}: {err}")]
-    CheckNoteError {
-        path: PathBuf,
-
-        #[source]
-        err: io::Error,
-    },
-
     #[error(transparent)]
-    StoreNoteError(StoreNoteError),
+    StoreNoteError(#[from] StoreIfDifferentError),
 
     #[error(transparent)]
     EditorSpawnError(#[from] OpenInEditorError),
