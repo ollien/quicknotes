@@ -126,14 +126,31 @@ fn cli_command() -> ClapCommand {
                         "Create a new note.",
                         " The title for the note can be entered into the shell directly, including spaces.")
                     ,
-            )
+                )
         )
-        .subcommand(ClapCommand::new("daily").about("Open or create today's daily note").arg(Arg::new("offset").required(false)))
-        .subcommand(ClapCommand::new("index")
-            .about("Index the notes directory")
-            .long_about(concat!("Scan the notes directory, and add the notes there to the index.",
-            " This generally should not be necessary, as opening a note adds it to the index automatically,",
-            " but if notes are edited outside of quicknotes or deleted, then this can be useful.")))
+        .subcommand(
+            ClapCommand::new("daily")
+                .arg(Arg::new("offset").required(false))
+                .about("Open or create a daily note")
+                .long_about(
+                    concat!(
+                        "Open a daily note, or create one one does not already exist.",
+                        " Optionally, an offset can be supplied, which is a fuzzy date relative to today.",
+                        " Acceptable formats include, but are not limited to,  \"2015-10-21\", \"yesterday\" \"3 days ago\""
+                    )
+                )
+        )
+        .subcommand(
+            ClapCommand::new("index")
+                .about("Index the notes directory")
+                .long_about(
+                    concat!(
+                        "Scan the notes directory, and add the notes there to the index.",
+                        " This generally should not be necessary, as opening a note adds it to the index automatically,",
+                        " but if notes are edited outside of quicknotes or deleted, then this can be useful."
+                    )
+                )
+        )
         .subcommand(ClapCommand::new("open").about("Open an existing note"))
 }
 
