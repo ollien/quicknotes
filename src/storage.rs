@@ -283,8 +283,8 @@ fn is_different(tempfile: &mut TempFileHandle, against: &str) -> Result<bool, io
 
     let mut file_hasher = Sha256::new();
     io::copy(&mut tempfile.opened, &mut file_hasher)?;
-
     let file_hash = file_hasher.finalize();
+
     if against_hash == file_hash {
         return Ok(false);
     }
