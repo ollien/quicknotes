@@ -68,6 +68,8 @@ impl NoteConfig {
 /// The note will be created in the notes directory, with a name as close to the given title as
 /// possible, and then opened in the editor.
 ///
+/// Returns the path of the note, or None if nothing was written to the note.
+///
 /// # Errors
 ///
 /// Returns an error if there is an I/O failure creating the note, the editor fails to launch, or
@@ -105,6 +107,8 @@ pub struct MakeNoteError {
 /// This operates very similarly to [`make_note`], but the title of the note will be the
 /// date part of the creation time. If one already exists, it will be opened instead of
 /// creating a new one.
+///
+/// Returns the path of the note, or None if nothing was written to the note.
 ///
 /// # Errors
 ///
