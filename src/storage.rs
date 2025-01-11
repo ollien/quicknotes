@@ -260,7 +260,7 @@ pub fn store_if_different<S: StoreNote>(
 pub struct StoreIfDifferentError(#[from] InnerStoreIfDifferentError);
 
 #[derive(Error, Debug)]
-pub enum InnerStoreIfDifferentError {
+enum InnerStoreIfDifferentError {
     #[error("could not check note before storing it; it still exists at {path}: {err}")]
     CheckFileError {
         path: PathBuf,
@@ -318,7 +318,7 @@ fn try_preserve_note(tempfile: TempFileHandle) -> Result<(), TryPreserveNoteErro
 
 #[derive(Error, Debug)]
 #[error("note was unable to be preserved ({keep_error}), and then could not be read for you ({read_error}).")]
-pub struct TryPreserveNoteError {
+struct TryPreserveNoteError {
     // This should VERY RARELY happen. There are failsafes to make this as hard as possible.
     // You can see why at its usage, but tl;dr tempfile can fail to keep the file (on windows)
     #[source]
