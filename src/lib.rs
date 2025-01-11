@@ -12,7 +12,10 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
-use storage::{StoreNote, StoreNoteAt, StoreNoteError, StoreNoteIn};
+use storage::{
+    store_if_different, StoreIfDifferentError, StoreNote, StoreNoteAt, StoreNoteError, StoreNoteIn,
+    TempFileHandle,
+};
 use tempfile::{Builder as TempFileBuilder, NamedTempFile, TempPath};
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
@@ -74,7 +77,7 @@ pub fn make_note<E: Editor, Tz: TimeZone>(
     editor: E,
     title: String,
     creation_time: &DateTime<Tz>,
-) -> Result<PathBuf, MakeNoteError> {
+) -> Result<Option<PathBuf>, MakeNoteError> {
     let filename_stem = note::filename_stem_for_title(&title);
     let store = StoreNoteIn {
         storage_directory: config.notes_directory_path(),
@@ -82,10 +85,10 @@ pub fn make_note<E: Editor, Tz: TimeZone>(
         file_extension: config.file_extension.clone(),
     };
 
-    let written_path =
+    let maybe_written_path =
         make_note_with_store(config, store, editor, title, creation_time, NoteKind::Note)?;
 
-    Ok(written_path)
+    Ok(maybe_written_path)
 }
 
 /// An error that occurred during a call to [`make_note`]. [errors section](`make_note#Errors`)
@@ -111,7 +114,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
     creation_time: &DateTime<Tz>,
-) -> Result<PathBuf, MakeOrOpenDailyNoteError> {
+) -> Result<Option<PathBuf>, MakeOrOpenDailyNoteError> {
     let filename_stem = note::filename_stem_for_date(creation_time.date_naive());
     let destination_path = config
         .daily_directory_path()
@@ -135,7 +138,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
         open_existing_note_in_editor(config, editor, NoteKind::Daily, &destination_path)
             .map_err(InnerMakeOrOpenDailyNoteError::from)?;
 
-        Ok(destination_path)
+        Ok(Some(destination_path))
     } else {
         // We should be able to store the note with the date's name.
         //
@@ -149,7 +152,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
             destination: destination_path,
         };
 
-        let actual_path = make_note_with_store(
+        let maybe_actual_path = make_note_with_store(
             config,
             store,
             editor,
@@ -159,7 +162,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
         )
         .map_err(InnerMakeOrOpenDailyNoteError::from)?;
 
-        Ok(actual_path)
+        Ok(maybe_actual_path)
     }
 }
 
@@ -263,21 +266,32 @@ fn make_note_with_store<E: Editor, Tz: TimeZone, S: StoreNote>(
     title: String,
     creation_time: &DateTime<Tz>,
     kind: NoteKind,
-) -> Result<PathBuf, MakeNoteAtError> {
+) -> Result<Option<PathBuf>, MakeNoteAtError> {
     let tempfile = make_tempfile(config).map_err(MakeNoteAtError::CreateTempfileError)?;
     let preamble = Preamble::new(title, creation_time.fixed_offset());
 
-    write_preamble(&preamble, &tempfile)?;
+    let serialized_preamble = write_preamble(&preamble, &tempfile)?;
     open_in_editor(editor, &tempfile)?;
 
-    let actual_destination_path = store
-        .store(tempfile)
-        .map_err(MakeNoteAtError::StoreNoteError)?;
+    let handle = TempFileHandle::open(tempfile).map_err(MakeNoteAtError::OpenNoteError)?;
+    let maybe_actual_path =
+        store_if_different(store, handle, &serialized_preamble).map_err(|err| match err {
+            StoreIfDifferentError::CheckFileError { path, err } => {
+                MakeNoteAtError::CheckNoteError { path, err }
+            }
+            StoreIfDifferentError::StoreNoteError(err) => MakeNoteAtError::StoreNoteError(err),
+        })?;
 
-    let mut index_connection = open_index_database(config)?;
-    index_note(&mut index_connection, kind, &actual_destination_path)?;
+    match maybe_actual_path {
+        Some(actual_destination_path) => {
+            let mut index_connection = open_index_database(config)?;
+            index_note(&mut index_connection, kind, &actual_destination_path)?;
 
-    Ok(actual_destination_path)
+            Ok(Some(actual_destination_path))
+        }
+
+        None => Ok(None),
+    }
 }
 
 #[derive(Error, Debug)]
@@ -288,6 +302,17 @@ enum MakeNoteAtError {
 
     #[error("could not write preamble to file: {0}")]
     WritePreambleError(#[from] WritePreambleError),
+
+    #[error("could not open note for storage: {0}")]
+    OpenNoteError(io::Error),
+
+    #[error("could not check note before storing it; it still exists at {path}: {err}")]
+    CheckNoteError {
+        path: PathBuf,
+
+        #[source]
+        err: io::Error,
+    },
 
     #[error(transparent)]
     StoreNoteError(StoreNoteError),
@@ -315,7 +340,7 @@ fn make_tempfile(config: &NoteConfig) -> Result<TempPath, io::Error> {
     }
 }
 
-fn write_preamble(preamble: &Preamble, path: &Path) -> Result<(), WritePreambleError> {
+fn write_preamble(preamble: &Preamble, path: &Path) -> Result<String, WritePreambleError> {
     let mut file = OpenOptions::new()
         .write(true)
         .create(false)
@@ -323,8 +348,11 @@ fn write_preamble(preamble: &Preamble, path: &Path) -> Result<(), WritePreambleE
         .map_err(WritePreambleError::OpenError)?;
 
     let serialized_preamble = preamble.serialize()?;
+    let to_write = format!("{serialized_preamble}\n\n");
+    file.write_all(to_write.as_bytes())
+        .map_err(WritePreambleError::WriteError)?;
 
-    write!(file, "{serialized_preamble}\n\n").map_err(WritePreambleError::WriteError)
+    Ok(to_write)
 }
 
 #[derive(Error, Debug)]

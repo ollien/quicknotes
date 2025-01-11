@@ -28,9 +28,11 @@ fn writes_notes_to_notes_directory() {
 
     let stored_path =
         quicknotes::make_note(&config, editor, "my cool note".to_string(), &test_time())
-            .expect("could not write note");
+            .expect("could not write note")
+            .expect("file has contents, so path should have been returned");
 
     let expected_note_path = roots.note_root.path().join("notes/my-cool-note.txt");
+
     assert_eq!(stored_path, expected_note_path);
 
     let note_contents = fs::read_to_string(expected_note_path).expect("failed to open note");
@@ -50,7 +52,8 @@ fn writes_dailies_to_notes_directory() {
     editor.note_contents("today was a cool day\n".to_string());
 
     let stored_path = quicknotes::make_or_open_daily(&config, editor, &test_time())
-        .expect("could not write note");
+        .expect("could not write note")
+        .expect("file has contents, so path should have been returned");
 
     let expected_note_path = roots.note_root.path().join("daily/2015-10-21.txt");
 
@@ -75,7 +78,8 @@ fn writes_notes_to_notes_directory_even_if_inode_changes() {
 
     let stored_path =
         quicknotes::make_note(&config, editor, "my cool note".to_string(), &test_time())
-            .expect("could not write note");
+            .expect("could not write note")
+            .expect("file has contents, so path should have been returned");
 
     let expected_note_path = roots.note_root.path().join("notes/my-cool-note.txt");
     assert_eq!(stored_path, expected_note_path);
@@ -123,7 +127,8 @@ fn opening_two_notes_with_the_same_name_prevents_clobbering() {
     editor.note_contents("hello, world!\n".to_string());
     let note_path =
         quicknotes::make_note(&config, editor, "my cool note".to_string(), &test_time())
-            .expect("could not write note");
+            .expect("could not write note")
+            .expect("file has contents, so path should have been returned");
 
     let original_note_contents = fs::read_to_string(&note_path).expect("failed to open note");
 
@@ -132,7 +137,9 @@ fn opening_two_notes_with_the_same_name_prevents_clobbering() {
     let second_note_result =
         quicknotes::make_note(&config, editor, "my cool note".to_string(), &test_time());
 
-    let upd_note_path = second_note_result.expect("failed to write note");
+    let upd_note_path = second_note_result
+        .expect("failed to write note")
+        .expect("file has contents, so path should have been returned");
 
     let upd_original_location_contents =
         fs::read_to_string(&note_path).expect("failed to open note");
@@ -161,7 +168,8 @@ fn opening_two_notes_with_the_same_name_prevents_clobbering_even_if_collision_ex
     editor.note_contents("hello, world!\n".to_string());
     let note_path =
         quicknotes::make_note(&config, editor, "my cool note".to_string(), &test_time())
-            .expect("could not write note");
+            .expect("could not write note")
+            .expect("file has contents, so path should have been returned");
 
     let original_note_contents = fs::read_to_string(&note_path).expect("failed to open note");
 
@@ -197,7 +205,9 @@ fn opening_two_notes_with_the_same_name_prevents_clobbering_even_if_collision_ex
     let second_note_result =
         quicknotes::make_note(&config, editor, "my cool note".to_string(), &test_time());
 
-    let upd_note_path = second_note_result.expect("failed to write note");
+    let upd_note_path = second_note_result
+        .expect("failed to write note")
+        .expect("file has contents, so path should have been returned");
 
     // The new note should not be 1-3
     assert_eq!(
@@ -215,4 +225,27 @@ fn opening_two_notes_with_the_same_name_prevents_clobbering_even_if_collision_ex
 
     let upd_note_contents = fs::read_to_string(&upd_note_path).expect("failed to open note");
     insta::assert_snapshot!(upd_note_contents);
+}
+
+#[test]
+fn writing_nothing_to_file_results_in_no_file_written() {
+    let roots = testutil::setup_filesystem();
+    let config = NoteConfig {
+        file_extension: "txt".to_string(),
+        root_dir: roots.note_root.path().to_owned(),
+        temp_root_override: Some(roots.temp_root.path().to_owned()),
+    };
+
+    let stored_path = quicknotes::make_note(
+        &config,
+        AppendEditor::new(),
+        "my cool note".to_string(),
+        &test_time(),
+    )
+    .expect("could not write note");
+
+    assert_eq!(stored_path, None);
+
+    let contents = fs::read_dir(roots.note_root).expect("could not read notes dir");
+    assert!(contents.into_iter().next().is_none());
 }

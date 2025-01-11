@@ -1,8 +1,9 @@
 use itertools::Itertools;
 use regex::Regex;
+use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io,
+    io::{self, BufReader, Read, Seek},
     path::{Path, PathBuf},
 };
 use tempfile::TempPath;
@@ -10,10 +11,15 @@ use thiserror::Error;
 
 use crate::warning;
 
+pub struct TempFileHandle {
+    opened: BufReader<File>,
+    path: TempPath,
+}
+
 /// Stores the given tempfile into a storage medium. This trait can not be implemented
 /// by other modules, in order to avoid heap allocations for handling the error.
 pub trait StoreNote: sealed::StoreNote {
-    fn store(self, tempfile: TempPath) -> Result<PathBuf, StoreNoteError>;
+    fn store(self, tempfile: TempFileHandle) -> Result<PathBuf, StoreNoteError>;
 }
 
 #[derive(Error, Debug)]
@@ -50,20 +56,31 @@ pub struct StoreNoteIn {
     pub file_extension: String,
 }
 
+impl TempFileHandle {
+    pub fn open(temppath: TempPath) -> Result<Self, io::Error> {
+        let file = File::open(&temppath)?;
+
+        Ok(Self {
+            opened: BufReader::new(file),
+            path: temppath,
+        })
+    }
+}
+
 impl StoreNote for StoreNoteAt {
-    fn store(self, tempfile: TempPath) -> Result<PathBuf, StoreNoteError> {
+    fn store(self, tempfile: TempFileHandle) -> Result<PathBuf, StoreNoteError> {
         self.do_store(tempfile)
             .map_err(|err| StoreNoteError { inner: err.into() })
     }
 }
 
 impl StoreNoteAt {
-    fn do_store(self, tempfile: TempPath) -> Result<PathBuf, StoreNoteAtError> {
-        match copy_to_destination(&tempfile, &self.destination) {
+    fn do_store(self, mut tempfile: TempFileHandle) -> Result<PathBuf, StoreNoteAtError> {
+        match copy_to_destination(&mut tempfile.opened, &self.destination) {
             Ok(()) => Ok(self.destination),
 
             Err(err) => {
-                let tempfile_path = tempfile.display().to_string();
+                let tempfile_path = tempfile.path.display().to_string();
                 try_preserve_note(tempfile)?;
 
                 Err(StoreNoteAtError::CopyError {
@@ -91,14 +108,14 @@ enum StoreNoteAtError {
 }
 
 impl StoreNote for StoreNoteIn {
-    fn store(self, tempfile: TempPath) -> Result<PathBuf, StoreNoteError> {
+    fn store(self, tempfile: TempFileHandle) -> Result<PathBuf, StoreNoteError> {
         self.do_store(tempfile)
             .map_err(|err| StoreNoteError { inner: err.into() })
     }
 }
 
 impl StoreNoteIn {
-    fn do_store(self, tempfile: TempPath) -> Result<PathBuf, StoreNoteInError> {
+    fn do_store(self, mut tempfile: TempFileHandle) -> Result<PathBuf, StoreNoteInError> {
         let mut destination = self
             .storage_directory
             .join(self.preferred_file_stem)
@@ -108,7 +125,7 @@ impl StoreNoteIn {
         // something else inserts it quickly. It is technically possible this loops
         // forever, but it is extremely unlikely.
         loop {
-            match copy_to_destination(&tempfile, &destination) {
+            match copy_to_destination(&mut tempfile.opened, &destination) {
                 Ok(()) => return Ok(destination),
 
                 Err(err @ CopyToDestinationError::FileSetupError(..))
@@ -126,7 +143,7 @@ impl StoreNoteIn {
                         }
 
                         Err(err) => {
-                            let tempfile_path = tempfile.display().to_string();
+                            let tempfile_path = tempfile.path.display().to_string();
                             try_preserve_note(tempfile)?;
 
                             return Err(StoreNoteInError::NoteClobberPreventionError {
@@ -139,7 +156,7 @@ impl StoreNoteIn {
                 }
 
                 Err(err) => {
-                    let tempfile_path = tempfile.display().to_string();
+                    let tempfile_path = tempfile.path.display().to_string();
                     try_preserve_note(tempfile)?;
 
                     return Err(StoreNoteInError::CopyError {
@@ -174,15 +191,14 @@ enum StoreNoteInError {
     TryPreserveNoteError(#[from] TryPreserveNoteError),
 }
 
-fn copy_to_destination(from: &Path, to: &Path) -> Result<(), CopyToDestinationError> {
-    let mut src_file = File::open(from).map_err(CopyToDestinationError::FileSetupError)?;
+fn copy_to_destination<R: Read>(mut src: R, to: &Path) -> Result<(), CopyToDestinationError> {
     let mut destination_file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(to)
         .map_err(CopyToDestinationError::FileSetupError)?;
 
-    io::copy(&mut src_file, &mut destination_file).map_err(CopyToDestinationError::CopyError)?;
+    io::copy(&mut src, &mut destination_file).map_err(CopyToDestinationError::CopyError)?;
 
     Ok(())
 }
@@ -215,11 +231,60 @@ impl CopyToDestinationError {
     }
 }
 
-fn try_preserve_note(tempfile: TempPath) -> Result<(), TryPreserveNoteError> {
-    // Store the path in case the keep operation fails somehow
-    let tempfile_path = tempfile.to_path_buf();
+pub fn store_if_different<S: StoreNote>(
+    storage: S,
+    mut tempfile: TempFileHandle,
+    against: &str,
+) -> Result<Option<PathBuf>, StoreIfDifferentError> {
+    let mut against_hasher = Sha256::new();
+    against_hasher.update(against.as_bytes());
+    let against_hash = against_hasher.finalize();
 
-    match tempfile.keep() {
+    let mut file_hasher = Sha256::new();
+    io::copy(&mut tempfile.opened, &mut file_hasher).map_err(|err| {
+        StoreIfDifferentError::CheckFileError {
+            path: tempfile.path.to_path_buf(),
+            err,
+        }
+    })?;
+    let file_hash = file_hasher.finalize();
+
+    if against_hash == file_hash {
+        return Ok(None);
+    }
+
+    tempfile
+        .opened
+        .rewind()
+        .map_err(|err| StoreIfDifferentError::CheckFileError {
+            path: tempfile.path.to_path_buf(),
+            err,
+        })?;
+
+    let path = storage.store(tempfile)?;
+
+    Ok(Some(path))
+}
+
+#[derive(Error, Debug)]
+pub enum StoreIfDifferentError {
+    #[error("{err}")]
+    CheckFileError {
+        path: PathBuf,
+
+        #[source]
+        err: io::Error,
+    },
+
+    #[error(transparent)]
+    StoreNoteError(#[from] StoreNoteError),
+}
+
+fn try_preserve_note(tempfile: TempFileHandle) -> Result<(), TryPreserveNoteError> {
+    // Store the path in case the keep operation fails somehow
+    let tempfile_path = tempfile.path.to_path_buf();
+
+    match tempfile.path.keep() {
         Ok(_result) => Ok(()),
         Err(tempfile::PathPersistError {
             error: keep_error, ..

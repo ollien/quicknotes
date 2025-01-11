@@ -143,14 +143,22 @@ fn run_new(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches)
         .unwrap_or_default()
         .join(" ");
 
-    quicknotes::make_note(config, editor, title, &Local::now())
+    let path = quicknotes::make_note(config, editor, title, &Local::now())
         .unwrap_or_exit("could not create note");
+
+    if path.is_none() {
+        eprintln!("nothing was written in the note; note discarded");
+    }
 }
 
 fn run_daily(config: &NoteConfig, editor: &CommandEditor) {
     ensure_daily_dir_exists(config).unwrap_or_exit("could not create dailies directory");
-    quicknotes::make_or_open_daily(config, editor, &Local::now())
+    let path = quicknotes::make_or_open_daily(config, editor, &Local::now())
         .unwrap_or_exit("could not create daily note");
+
+    if path.is_none() {
+        eprintln!("nothing was written in the note; note discarded");
+    }
 }
 
 fn run_index(config: &NoteConfig) {
