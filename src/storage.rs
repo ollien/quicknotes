@@ -235,38 +235,32 @@ pub fn store_if_different<S: StoreNote>(
     mut tempfile: TempFileHandle,
     against: &str,
 ) -> Result<Option<PathBuf>, StoreIfDifferentError> {
-    let mut against_hasher = Sha256::new();
-    against_hasher.update(against.as_bytes());
-    let against_hash = against_hasher.finalize();
+    match is_different(&mut tempfile, against) {
+        Ok(false) => Ok(None),
 
-    let mut file_hasher = Sha256::new();
-    io::copy(&mut tempfile.opened, &mut file_hasher).map_err(|err| {
-        StoreIfDifferentError::CheckFileError {
-            path: tempfile.path.to_path_buf(),
-            err,
+        Ok(true) => {
+            let path = storage
+                .store(tempfile)
+                .map_err(|err| StoreIfDifferentError(err.into()))?;
+
+            Ok(Some(path))
         }
-    })?;
-    let file_hash = file_hasher.finalize();
 
-    if against_hash == file_hash {
-        return Ok(None);
+        Err(err) => {
+            let path = tempfile.path.to_path_buf();
+            try_preserve_note(tempfile).map_err(|err| StoreIfDifferentError(err.into()))?;
+
+            Err(InnerStoreIfDifferentError::CheckFileError { path, err }.into())
+        }
     }
-
-    tempfile
-        .opened
-        .rewind()
-        .map_err(|err| StoreIfDifferentError::CheckFileError {
-            path: tempfile.path.to_path_buf(),
-            err,
-        })?;
-
-    let path = storage.store(tempfile)?;
-
-    Ok(Some(path))
 }
 
 #[derive(Error, Debug)]
-pub enum StoreIfDifferentError {
+#[error(transparent)]
+pub struct StoreIfDifferentError(#[from] InnerStoreIfDifferentError);
+
+#[derive(Error, Debug)]
+pub enum InnerStoreIfDifferentError {
     #[error("could not check note before storing it; it still exists at {path}: {err}")]
     CheckFileError {
         path: PathBuf,
@@ -276,7 +270,28 @@ pub enum StoreIfDifferentError {
     },
 
     #[error(transparent)]
+    TryPreserveNoteError(#[from] TryPreserveNoteError),
+
+    #[error(transparent)]
     StoreNoteError(#[from] StoreNoteError),
+}
+
+fn is_different(tempfile: &mut TempFileHandle, against: &str) -> Result<bool, io::Error> {
+    let mut against_hasher = Sha256::new();
+    against_hasher.update(against.as_bytes());
+    let against_hash = against_hasher.finalize();
+
+    let mut file_hasher = Sha256::new();
+    io::copy(&mut tempfile.opened, &mut file_hasher)?;
+
+    let file_hash = file_hasher.finalize();
+    if against_hash == file_hash {
+        return Ok(false);
+    }
+
+    tempfile.opened.rewind()?;
+
+    Ok(true)
 }
 
 fn try_preserve_note(tempfile: TempFileHandle) -> Result<(), TryPreserveNoteError> {
@@ -303,7 +318,7 @@ fn try_preserve_note(tempfile: TempFileHandle) -> Result<(), TryPreserveNoteErro
 
 #[derive(Error, Debug)]
 #[error("note was unable to be preserved ({keep_error}), and then could not be read for you ({read_error}).")]
-struct TryPreserveNoteError {
+pub struct TryPreserveNoteError {
     // This should VERY RARELY happen. There are failsafes to make this as hard as possible.
     // You can see why at its usage, but tl;dr tempfile can fail to keep the file (on windows)
     #[source]
