@@ -262,6 +262,22 @@ pub struct IndexedNotesError {
     inner: AllIndexedNotesError,
 }
 
+pub fn indexed_notes_with_kind(
+    config: &NoteConfig,
+    kind: NoteKind,
+) -> Result<HashMap<PathBuf, IndexedNote>, IndexedNotesWithKindError> {
+    let notes = kinded_indexed_notes(config, kind)?;
+
+    Ok(notes)
+}
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub struct IndexedNotesWithKindError {
+    #[from]
+    inner: KindedIndexedNotesError,
+}
+
 fn make_note_with_store<E: Editor, Tz: TimeZone, S: StoreNote>(
     config: &NoteConfig,
     store: S,
@@ -504,6 +520,25 @@ fn all_indexed_notes(
 
 #[derive(Error, Debug)]
 enum AllIndexedNotesError {
+    #[error(transparent)]
+    IndexOpenError(#[from] IndexOpenError),
+
+    #[error("could not query index database: {0}")]
+    QueryError(#[from] IndexLookupError),
+}
+
+fn kinded_indexed_notes(
+    config: &NoteConfig,
+    kind: NoteKind,
+) -> Result<HashMap<PathBuf, IndexedNote>, KindedIndexedNotesError> {
+    let mut connection = open_index_database(config)?;
+    let notes = index::notes_with_kind(&mut connection, kind)?;
+
+    Ok(notes)
+}
+
+#[derive(Error, Debug)]
+enum KindedIndexedNotesError {
     #[error(transparent)]
     IndexOpenError(#[from] IndexOpenError),
 

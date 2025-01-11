@@ -398,3 +398,81 @@ fn regular_notes_are_marked_with_notes_kind() {
         vec![(daily_note_path, NoteKind::Note),]
     )
 }
+
+#[test]
+fn can_lookup_only_one_kind_of_note() {
+    let roots = testutil::setup_filesystem();
+    let cool_note_path = roots
+        .note_root
+        .path()
+        .join("notes")
+        .join("my-cool-note.txt");
+
+    std::fs::write(
+        &cool_note_path,
+        textwrap::dedent(
+            r#"
+            ---
+            title = "my cool note"
+            created_at = 2015-10-21T07:28:00-07:00
+            ---
+            "#
+            .trim_start_matches("\n"),
+        ),
+    )
+    .expect("could not write note");
+
+    let awesome_note_path = roots
+        .note_root
+        .path()
+        .join("notes")
+        .join("my-awesome-note.txt");
+
+    std::fs::write(
+        &awesome_note_path,
+        textwrap::dedent(
+            r#"
+            ---
+            title = "my awesome note"
+            created_at = 2015-10-22T07:28:00-07:00
+            ---
+            "#
+            .trim_start_matches("\n"),
+        ),
+    )
+    .expect("could not write note");
+
+    let daily_note_path = roots.note_root.path().join("daily").join("2015-10-21.txt");
+    std::fs::write(
+        &daily_note_path,
+        textwrap::dedent(
+            r#"
+            ---
+            title = "2015-10-21"
+            created_at = 2015-10-21T07:28:00-07:00
+            ---
+            "#
+            .trim_start_matches("\n"),
+        ),
+    )
+    .expect("could not write note");
+
+    let config = NoteConfig {
+        file_extension: "txt".to_string(),
+        root_dir: roots.note_root.path().to_owned(),
+        temp_root_override: Some(roots.temp_root.path().to_owned()),
+    };
+
+    quicknotes::index_notes(&config).expect("could not index notes");
+
+    let notes = quicknotes::indexed_notes_with_kind(&config, NoteKind::Daily)
+        .expect("could not read indexed notes");
+
+    assert_eq!(
+        notes
+            .into_iter()
+            .map(|(path, note)| (path, note.preamble.title))
+            .collect::<Vec<_>>(),
+        vec![(daily_note_path, "2015-10-21".to_string())]
+    )
+}

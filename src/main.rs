@@ -9,6 +9,7 @@ use std::{env, process};
 use anyhow::anyhow;
 use chrono::{Local, NaiveDate, Timelike};
 use chrono_english::Dialect;
+use clap::builder::PossibleValuesParser;
 use clap::{Arg, Command as ClapCommand};
 use colored::Colorize;
 use directories::{ProjectDirs, UserDirs};
@@ -108,7 +109,7 @@ fn main() {
         Some(("new", submatches)) => run_new(&note_config, &editor, submatches),
         Some(("daily", submatches)) => run_daily(&note_config, &editor, submatches),
         Some(("index", _submatches)) => run_index(&note_config),
-        Some(("open", _submatches)) => run_open(&note_config, &editor),
+        Some(("open", submatches)) => run_open(&note_config, &editor, submatches),
         _ => unreachable!(),
     }
 }
@@ -151,7 +152,22 @@ fn cli_command() -> ClapCommand {
                     )
                 )
         )
-        .subcommand(ClapCommand::new("open").about("Open an existing note"))
+        .subcommand(
+            ClapCommand::new("open")
+            .arg(
+                Arg::new("kind")
+                    .value_parser(PossibleValuesParser::new(vec!["note", "daily", "all"]))
+                    .default_value("note")
+            )
+            .about("Open an existing note")
+                .long_about(
+                    concat!(
+                        "Open an existing note.",
+                        " Optionally, the type of note can be specified. Defaults to 'note'",
+                        " (i.e. those created with quicknotes new).",
+                    )
+                )
+        )
 }
 
 fn run_new(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches) {
@@ -195,10 +211,25 @@ fn run_index(config: &NoteConfig) {
     quicknotes::index_notes(config).unwrap_or_exit("could not index notes");
 }
 
-fn run_open(config: &NoteConfig, editor: &CommandEditor) {
+fn run_open(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches) {
     ensure_root_dir_exists(config).unwrap_or_exit("could not create root quicknotes directory");
 
-    let indexed_notes = quicknotes::indexed_notes(config).unwrap_or_exit("couldn't load notes");
+    let kind = args
+        .get_one::<String>("kind")
+        .expect("kind has a default value");
+
+    let indexed_notes = match kind.as_str() {
+        "all" => quicknotes::indexed_notes(config).unwrap_or_exit("couldn't load notes"),
+
+        "note" => quicknotes::indexed_notes_with_kind(config, quicknotes::NoteKind::Note)
+            .unwrap_or_exit("couldn't load notes"),
+
+        "daily" => quicknotes::indexed_notes_with_kind(config, quicknotes::NoteKind::Daily)
+            .unwrap_or_exit("couldn't load notes"),
+
+        _ => unreachable!("invalid argument, should be caught by clap"),
+    };
+
     let mut picker = PickerOptions::new()
         .highlight(true)
         .case_matching(CaseMatching::Smart)

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone};
-use rusqlite::{Connection, Row};
+use rusqlite::{Connection, Params, Row, Statement};
 use rusqlite_migration::{Migrations, M};
 use thiserror::Error;
 
@@ -133,8 +133,26 @@ pub fn all_notes(
     let mut query = connection
         .prepare("SELECT filepath, title, created_at, utc_offset_seconds, kind FROM notes;")?;
 
+    lookup_notes(&mut query, [])
+}
+
+pub fn notes_with_kind(
+    connection: &mut Connection,
+    kind: NoteKind,
+) -> Result<HashMap<PathBuf, IndexedNote>, LookupError> {
+    let mut query = connection.prepare(
+        "SELECT filepath, title, created_at, utc_offset_seconds, kind FROM notes WHERE kind=?;",
+    )?;
+
+    lookup_notes(&mut query, [kind.to_sql_enum()])
+}
+
+fn lookup_notes<P: Params>(
+    query: &mut Statement<'_>,
+    params: P,
+) -> Result<HashMap<PathBuf, IndexedNote>, LookupError> {
     let notes = query
-        .query_map([], |row| match unpack_row(row) {
+        .query_map(params, |row| match unpack_row(row) {
             Err(QueryFailure::DatabaseFailure(err)) => Err(err),
             Err(QueryFailure::InvalidRow(msg)) => {
                 // TODO: perhaps we want some kind of read-repair here.
@@ -466,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    pub fn select_all_skips_notes_with_malformed_timestamps() {
+    pub fn selecting_skips_notes_with_malformed_timestamps() {
         let mut connection = Connection::open_in_memory().expect("could not open test database");
         setup_database(&mut connection).expect("could not setup test database");
 
@@ -518,6 +536,59 @@ mod tests {
                 }
             )]
         );
+    }
+
+    #[test]
+    pub fn selecting_filters_notes_of_other_kinds() {
+        let mut connection = Connection::open_in_memory().expect("could not open test database");
+        setup_database(&mut connection).expect("could not setup test database");
+
+        let preamble1 = Preamble {
+            title: "Hello world".to_string(),
+            created_at: FixedOffset::east_opt(-7 * 60 * 60)
+                .unwrap()
+                .with_ymd_and_hms(2015, 10, 21, 7, 28, 0)
+                .single()
+                .unwrap(),
+        };
+
+        add_note(
+            &mut connection,
+            &preamble1,
+            NoteKind::Note,
+            &PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/hello-world.txt").unwrap(),
+        )
+        .unwrap();
+
+        let preamble2 = Preamble {
+            title: "2015-10-21".to_string(),
+            created_at: FixedOffset::east_opt(-7 * 60 * 60)
+                .unwrap()
+                .with_ymd_and_hms(2015, 10, 21, 7, 28, 0)
+                .single()
+                .unwrap(),
+        };
+
+        add_note(
+            &mut connection,
+            &preamble2,
+            NoteKind::Daily,
+            &PathBuf::from_str("/home/ferris/Documents/quicknotes/daily/2015-10-21.txt").unwrap(),
+        )
+        .unwrap();
+
+        let notes =
+            notes_with_kind(&mut connection, NoteKind::Note).expect("Failed to query notes");
+
+        let expected_entry = (
+            PathBuf::from_str("/home/ferris/Documents/quicknotes/notes/hello-world.txt").unwrap(),
+            IndexedNote {
+                preamble: preamble1,
+                kind: NoteKind::Note,
+            },
+        );
+
+        assert_eq!(notes.into_iter().collect::<Vec<_>>(), vec![expected_entry]);
     }
 
     #[test]
