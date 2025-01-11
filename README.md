@@ -3,7 +3,7 @@
 ![Crates.io Version](https://img.shields.io/crates/v/quicknotes)
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/ollien/quicknotes/push.yml)
 
-`quicknotes` is a notes application designed to make taking notes ... quick.
+`quicknotes` is a notes application that makes taking notes... quick.
 You can edit your notes using your preferred text editor, and all notes are
 saved locally in plain text.
 

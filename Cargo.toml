@@ -1,6 +1,11 @@
 [package]
 name = "quicknotes"
+description = "A notes application that makes taking notes... quick"
 version = "1.0.0"
+license = "BSD-3-Clause"
+license-file = "LICENSE"
+homepage = "https://github.com/ollien/quicknotes"
+repository = "https://github.com/ollien/quicknotes"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
