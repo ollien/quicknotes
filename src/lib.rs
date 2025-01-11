@@ -100,7 +100,7 @@ pub struct MakeNoteError {
     inner: MakeNoteAtError,
 }
 
-/// Create or open a daily note for the given datetime.
+/// Create or open a daily note for the given date.
 ///
 /// This operates very similarly to [`make_note`], but the title of the note will be the
 /// date part of the creation time. If one already exists, it will be opened instead of

@@ -1,7 +1,8 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use anyhow::anyhow;
-use chrono::Local;
+use chrono::{Local, NaiveDate, Timelike};
+use chrono_english::Dialect;
 use clap::{Arg, Command as ClapCommand};
 use colored::Colorize;
 use directories::{ProjectDirs, UserDirs};
@@ -104,7 +105,7 @@ fn main() {
 
     match command.get_matches().subcommand() {
         Some(("new", submatches)) => run_new(&note_config, &editor, submatches),
-        Some(("daily", _submatches)) => run_daily(&note_config, &editor),
+        Some(("daily", submatches)) => run_daily(&note_config, &editor, submatches),
         Some(("index", _submatches)) => run_index(&note_config),
         Some(("open", _submatches)) => run_open(&note_config, &editor),
         _ => unreachable!(),
@@ -126,7 +127,7 @@ fn cli_command() -> ClapCommand {
                     ,
             )
         )
-        .subcommand(ClapCommand::new("daily").about("Open or create today's daily note"))
+        .subcommand(ClapCommand::new("daily").about("Open or create today's daily note").arg(Arg::new("offset").required(false)))
         .subcommand(ClapCommand::new("index")
             .about("Index the notes directory")
             .long_about(concat!("Scan the notes directory, and add the notes there to the index.",
@@ -151,10 +152,18 @@ fn run_new(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches)
     }
 }
 
-fn run_daily(config: &NoteConfig, editor: &CommandEditor) {
+fn run_daily(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches) {
     ensure_daily_dir_exists(config).unwrap_or_exit("could not create dailies directory");
     let now = Local::now();
-    let path = quicknotes::make_or_open_daily(config, editor, now.date_naive(), &now)
+    let note_date = args.get_one::<String>("offset").map_or_else(
+        || now.date_naive(),
+        |offset| {
+            fuzzy_offset_from_date(now.date_naive(), offset)
+                .unwrap_or_exit("could not parse daily note offset")
+        },
+    );
+
+    let path = quicknotes::make_or_open_daily(config, editor, note_date, &now)
         .unwrap_or_exit("could not create daily note");
 
     if path.is_none() {
@@ -331,6 +340,17 @@ fn remap_picker_result<T>(result: Result<Option<T>, io::Error>) -> Result<Option
     }
 }
 
+fn fuzzy_offset_from_date(date: NaiveDate, offset: &str) -> Result<NaiveDate, anyhow::Error> {
+    // this will always be valid because 00:00:00 is a valid time
+    let marker = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
+    let changed = chrono_english::parse_date_string(offset, marker, Dialect::Us)?;
+    if changed.num_seconds_from_midnight() > 0 {
+        return Err(anyhow!("invalid offset"));
+    }
+
+    Ok(changed.date_naive())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,5 +436,27 @@ mod tests {
             "Documents/quicknotes/".into_deserializer();
 
         assert!(OnDiskConfig::deserialize_notes_root(deserializer).is_err());
+    }
+
+    #[test]
+    fn fuzzy_offset_from_date_allows_date_based_offsets() {
+        let date =
+            fuzzy_offset_from_date(NaiveDate::from_ymd_opt(2015, 10, 21).unwrap(), "2 days ago")
+                .expect("could not convert from offset");
+
+        assert_eq!(date, NaiveDate::from_ymd_opt(2015, 10, 19).unwrap());
+    }
+
+    #[test]
+    fn fuzzy_offset_from_date_does_not_allow_time_based_offset() {
+        let res = fuzzy_offset_from_date(
+            NaiveDate::from_ymd_opt(2015, 10, 21).unwrap(),
+            "3 hours ago",
+        );
+
+        assert!(
+            res.is_err(),
+            "should not have been able to perform this conversion"
+        );
     }
 }
