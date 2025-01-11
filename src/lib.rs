@@ -1,7 +1,7 @@
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(clippy::enum_variant_names)]
 
-use chrono::{DateTime, TimeZone};
+use chrono::{DateTime, NaiveDate, TimeZone};
 use index::{LookupError as IndexLookupError, OpenError as IndexOpenError};
 use io::Write;
 use note::{Preamble, SerializeError};
@@ -113,9 +113,10 @@ pub struct MakeNoteError {
 pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
     config: &NoteConfig,
     editor: E,
+    for_day: NaiveDate,
     creation_time: &DateTime<Tz>,
 ) -> Result<Option<PathBuf>, MakeOrOpenDailyNoteError> {
-    let filename_stem = note::filename_stem_for_date(creation_time.date_naive());
+    let filename_stem = note::filename_stem_for_date(for_day);
     let destination_path = config
         .daily_directory_path()
         .join(filename_stem)
@@ -156,7 +157,7 @@ pub fn make_or_open_daily<E: Editor, Tz: TimeZone>(
             config,
             store,
             editor,
-            creation_time.date_naive().format("%Y-%m-%d").to_string(),
+            for_day.format("%Y-%m-%d").to_string(),
             creation_time,
             NoteKind::Daily,
         )

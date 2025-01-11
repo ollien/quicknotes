@@ -153,7 +153,8 @@ fn run_new(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches)
 
 fn run_daily(config: &NoteConfig, editor: &CommandEditor) {
     ensure_daily_dir_exists(config).unwrap_or_exit("could not create dailies directory");
-    let path = quicknotes::make_or_open_daily(config, editor, &Local::now())
+    let now = Local::now();
+    let path = quicknotes::make_or_open_daily(config, editor, now.date_naive(), &now)
         .unwrap_or_exit("could not create daily note");
 
     if path.is_none() {

@@ -50,10 +50,12 @@ fn writes_dailies_to_notes_directory() {
 
     let mut editor = AppendEditor::new();
     editor.note_contents("today was a cool day\n".to_string());
+    let datetime = test_time();
 
-    let stored_path = quicknotes::make_or_open_daily(&config, editor, &test_time())
-        .expect("could not write note")
-        .expect("file has contents, so path should have been returned");
+    let stored_path =
+        quicknotes::make_or_open_daily(&config, editor, datetime.date_naive(), &datetime)
+            .expect("could not write note")
+            .expect("file has contents, so path should have been returned");
 
     let expected_note_path = roots.note_root.path().join("daily/2015-10-21.txt");
 
@@ -101,10 +103,12 @@ fn editing_an_existing_daily_alters_the_same_file() {
     let mut editor = AppendEditor::new();
 
     editor.note_contents("today was a cool day\n".to_string());
-    quicknotes::make_or_open_daily(&config, &editor, &datetime).expect("could not write note");
+    quicknotes::make_or_open_daily(&config, &editor, datetime.date_naive(), &datetime)
+        .expect("could not write note");
 
     editor.note_contents("I have more to say!\n".to_string());
-    quicknotes::make_or_open_daily(&config, &editor, &datetime).expect("could not write note");
+    quicknotes::make_or_open_daily(&config, &editor, datetime.date_naive(), &datetime)
+        .expect("could not write note");
 
     let expected_note_path = roots.note_root.path().join("daily/2015-10-21.txt");
     let note_contents = fs::read_to_string(expected_note_path).expect("failed to open note");

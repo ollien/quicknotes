@@ -345,7 +345,9 @@ fn daily_notes_are_marked_with_daily_kind() {
     let mut append_editor = AppendEditor::new();
     append_editor.note_contents("today was a cool day\n".to_string());
 
-    quicknotes::make_or_open_daily(&config, &append_editor, &test_time())
+    let datetime = test_time();
+
+    quicknotes::make_or_open_daily(&config, &append_editor, datetime.date_naive(), &datetime)
         .expect("could not open note for editing");
 
     let notes = quicknotes::indexed_notes(&config).expect("could not read indexed notes");
