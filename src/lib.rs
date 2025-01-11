@@ -332,7 +332,8 @@ enum MakeNoteAtError {
 
 fn make_tempfile(config: &NoteConfig) -> Result<TempPath, io::Error> {
     let mut builder = TempFileBuilder::new();
-    let builder = builder.suffix(&config.file_extension);
+    let file_extension_suffix = format!(".{}", config.file_extension);
+    let builder = builder.suffix(&file_extension_suffix);
 
     if let Some(temp_dir) = config.temp_root_override.as_ref() {
         builder
