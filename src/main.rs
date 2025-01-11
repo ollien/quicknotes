@@ -176,13 +176,13 @@ fn cli_command() -> ClapCommand {
                     .default_value("note")
             )
             .about("Open an existing note")
-                .long_about(
-                    concat!(
-                        "Open an existing note.",
-                        " Optionally, the type of note can be specified. Defaults to 'note'",
-                        " (i.e. those created with quicknotes new).",
-                    )
+            .long_about(
+                concat!(
+                    "Open an existing note.",
+                    " Optionally, the type of note can be specified. Defaults to 'note'",
+                    " (i.e. those created with quicknotes new).",
                 )
+            )
         )
 }
 
