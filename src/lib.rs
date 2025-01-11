@@ -262,6 +262,13 @@ pub struct IndexedNotesError {
     inner: AllIndexedNotesError,
 }
 
+/// Get all of the notes currently stored in the index with the given kind, and metadata about them.
+///
+/// The returned `HashMap` maps from the path where the note to the metadata stored in its preamble.
+///
+/// # Errors
+///
+/// Returns an error if there was a problem opening or reading from the index.
 pub fn indexed_notes_with_kind(
     config: &NoteConfig,
     kind: NoteKind,
