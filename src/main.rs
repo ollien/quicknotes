@@ -1,6 +1,5 @@
 #![warn(clippy::all, clippy::pedantic)]
 
-use std::error::Error;
 use std::fmt::Display;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -14,6 +13,7 @@ use clap::{Arg, Command as ClapCommand};
 use colored::Colorize;
 use directories::{ProjectDirs, UserDirs};
 use itertools::Itertools;
+use nucleo_picker::error::PickError;
 use nucleo_picker::nucleo::pattern::CaseMatching;
 use nucleo_picker::{Picker, PickerOptions, Render};
 use quicknotes::{open_note, CommandEditor, IndexedNote, NoteConfig};
@@ -320,25 +320,15 @@ fn project_dirs() -> anyhow::Result<ProjectDirs> {
 
 fn pick<T: Send + Sync + 'static, R: Render<T>>(
     picker: &mut Picker<T, R>,
-) -> Result<Option<&T>, io::Error> {
-    remap_picker_result(picker.pick())
-}
-
-fn remap_picker_result<T>(result: Result<Option<T>, io::Error>) -> Result<Option<T>, io::Error> {
-    match result {
-        Ok(data) => Ok(data),
-        Err(err) => {
-            // There is no way to other way do this without producing a copy.
-            // The library guarantees that this wil be the message for a keyboard interrupt.
-            // So, while brittle, it does work.
-            #[allow(deprecated)]
-            if err.kind() == io::ErrorKind::Other && err.description() == "keyboard interrupt" {
-                Ok(None)
-            } else {
-                Err(err)
-            }
+) -> anyhow::Result<Option<&T>> {
+    picker.pick().or_else(|err| {
+        if let PickError::UserInterrupted = err {
+            // A user hitting ctrl-c is no different than esc for this purpose
+            Ok(None)
+        } else {
+            Err(err.into())
         }
-    }
+    })
 }
 
 fn fuzzy_offset_from_date(date: NaiveDate, offset: &str) -> Result<NaiveDate, anyhow::Error> {
