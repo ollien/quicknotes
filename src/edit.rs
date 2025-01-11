@@ -1,4 +1,6 @@
-use std::{io, path::Path, process::Command};
+use std::io;
+use std::path::Path;
+use std::process::Command;
 
 /// A text editor that can edit a given note. There is no requirement about the editor itself,
 /// just that it can edit a file at a given path.

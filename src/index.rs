@@ -1,17 +1,16 @@
-use std::{
-    collections::HashMap,
-    fs::OpenOptions,
-    io,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use chrono::{DateTime, FixedOffset, NaiveDateTime, TimeZone};
 use rusqlite::{Connection, Row};
 use rusqlite_migration::{Migrations, M};
 use thiserror::Error;
 
-use crate::{note::Preamble, warning};
+use crate::note::Preamble;
+use crate::warning;
 
 const DB_DATE_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.f";
 
@@ -271,7 +270,8 @@ fn migrations() -> Migrations<'static> {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, str::FromStr};
+    use std::path::PathBuf;
+    use std::str::FromStr;
 
     use chrono::{FixedOffset, TimeZone};
 

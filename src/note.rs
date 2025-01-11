@@ -1,10 +1,8 @@
 use std::io::{self, BufRead, BufReader, Read};
 
-use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Timelike};
-use chrono::{FixedOffset, Offset};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Offset, TimeZone, Timelike};
 use itertools::Itertools;
-use serde::{de, ser, Deserializer, Serializer};
-use serde::{Deserialize, Serialize};
+use serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
 use serde_derive::{Deserialize, Serialize};
 use thiserror::Error;
 use toml::value::Datetime as TomlDateTime;

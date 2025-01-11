@@ -1,5 +1,12 @@
 #![warn(clippy::all, clippy::pedantic)]
 
+use std::error::Error;
+use std::fmt::Display;
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
+use std::path::{Path, PathBuf};
+use std::{env, process};
+
 use anyhow::anyhow;
 use chrono::{Local, NaiveDate, Timelike};
 use chrono_english::Dialect;
@@ -12,12 +19,6 @@ use nucleo_picker::{Picker, PickerOptions, Render};
 use quicknotes::{open_note, CommandEditor, IndexedNote, NoteConfig};
 use serde::{de, Deserialize, Deserializer};
 use serde_derive::{Deserialize, Serialize};
-use std::error::Error;
-use std::fmt::Display;
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
-use std::{env, process};
 
 trait UnwrapOrExit<T> {
     fn unwrap_or_exit(self, msg: &str) -> T;
@@ -353,9 +354,11 @@ fn fuzzy_offset_from_date(date: NaiveDate, offset: &str) -> Result<NaiveDate, an
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use quicknotes::Editor;
-    use serde::de::{value::StrDeserializer, IntoDeserializer};
+    use serde::de::value::StrDeserializer;
+    use serde::de::IntoDeserializer;
+
+    use super::*;
 
     #[test]
     fn on_disk_config_unpack_does_not_replace_configured_editor() {

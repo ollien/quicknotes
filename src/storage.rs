@@ -1,11 +1,10 @@
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, BufReader, Read, Seek};
+use std::path::{Path, PathBuf};
+
 use itertools::Itertools;
 use regex::Regex;
 use sha2::{Digest, Sha256};
-use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, BufReader, Read, Seek},
-    path::{Path, PathBuf},
-};
 use tempfile::TempPath;
 use thiserror::Error;
 

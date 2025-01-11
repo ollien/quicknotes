@@ -1,17 +1,19 @@
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(clippy::enum_variant_names)]
 
+use std::collections::HashMap;
+use std::fs::{self, File, OpenOptions};
+use std::io;
+use std::path::{Path, PathBuf};
+
 use chrono::{DateTime, NaiveDate, TimeZone};
+pub use edit::{CommandEditor, Editor};
+pub use index::{IndexedNote, NoteKind};
 use index::{LookupError as IndexLookupError, OpenError as IndexOpenError};
 use io::Write;
+pub use note::Preamble as NotePreamble;
 use note::{Preamble, SerializeError};
 use rusqlite::Connection;
-use std::collections::HashMap;
-use std::{
-    fs::{self, File, OpenOptions},
-    io,
-    path::{Path, PathBuf},
-};
 use storage::{
     store_if_different, StoreIfDifferentError, StoreNote, StoreNoteAt, StoreNoteError, StoreNoteIn,
     TempFileHandle,
@@ -19,10 +21,6 @@ use storage::{
 use tempfile::{Builder as TempFileBuilder, NamedTempFile, TempPath};
 use thiserror::Error;
 use walkdir::{DirEntry, WalkDir};
-
-pub use edit::{CommandEditor, Editor};
-pub use index::{IndexedNote, NoteKind};
-pub use note::Preamble as NotePreamble;
 
 mod edit;
 mod index;
