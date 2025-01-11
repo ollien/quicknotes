@@ -341,7 +341,10 @@ fn open_existing_note<E: Editor>(
     kind: NoteKind,
     path: &Path,
 ) -> Result<(), OpenExistingNoteError> {
-    ensure_note_exists(path).map_err(OpenExistingNoteError::LookupError)?;
+    ensure_note_exists(path).map_err(|error| OpenExistingNoteError::LookupError {
+        path: path.to_owned(),
+        error,
+    })?;
     open_existing_note_in_editor(config, editor, kind, path)?;
 
     Ok(())
@@ -350,8 +353,12 @@ fn open_existing_note<E: Editor>(
 #[derive(Error, Debug)]
 #[error(transparent)]
 enum OpenExistingNoteError {
-    #[error("could not open note: {0}")]
-    LookupError(io::Error),
+    #[error("could not open note at {path}: {error}")]
+    LookupError {
+        path: PathBuf,
+        #[source]
+        error: io::Error,
+    },
 
     #[error(transparent)]
     OpenNoteInEditorError(#[from] OpenExistingNoteInEditorError),
