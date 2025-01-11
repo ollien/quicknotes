@@ -1,5 +1,6 @@
 #![warn(clippy::all, clippy::pedantic)]
 
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -7,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::{env, process};
 
 use anyhow::anyhow;
-use chrono::{Local, NaiveDate, Timelike};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate, Timelike};
 use chrono_english::Dialect;
 use clap::builder::PossibleValuesParser;
 use clap::{Arg, Command as ClapCommand};
@@ -25,18 +26,33 @@ trait UnwrapOrExit<T> {
     fn unwrap_or_exit(self, msg: &str) -> T;
 }
 
+#[derive(Clone, Debug)]
 struct IndexEntry {
     path: PathBuf,
     note: IndexedNote,
+    rendered_title_override: Option<String>,
 }
 
 struct IndexedNoteRenderer;
+
+impl IndexEntry {
+    fn new(path: PathBuf, note: IndexedNote) -> Self {
+        Self {
+            path,
+            note,
+            rendered_title_override: None,
+        }
+    }
+}
 
 impl Render<IndexEntry> for IndexedNoteRenderer {
     type Str<'a> = &'a str;
 
     fn render<'a>(&self, entry: &'a IndexEntry) -> Self::Str<'a> {
-        &entry.note.preamble.title
+        match &entry.rendered_title_override {
+            Some(title_override) => title_override,
+            None => &entry.note.preamble.title,
+        }
     }
 }
 
@@ -237,12 +253,9 @@ fn run_open(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches
 
     let picker_injector = picker.injector();
 
-    indexed_notes
-        .into_iter()
-        .map(|(path, note)| IndexEntry { path, note })
-        .for_each(|note| {
-            picker_injector.push(note);
-        });
+    for entry in build_index_entires(indexed_notes) {
+        picker_injector.push(entry);
+    }
 
     if let Some(selected_note) = pick(&mut picker).unwrap_or_exit("could not launch picker") {
         open_note(config, editor, selected_note.note.kind, &selected_note.path)
@@ -366,6 +379,41 @@ fn project_dirs() -> anyhow::Result<ProjectDirs> {
     )
 }
 
+fn build_index_entires(entries: HashMap<PathBuf, IndexedNote>) -> Vec<IndexEntry> {
+    entries
+        .into_iter()
+        .map(|(path, note)| IndexEntry::new(path, note))
+        .into_group_map_by(|entry| entry.note.preamble.title.clone())
+        .into_iter()
+        .flat_map(|(title, entries)| {
+            let length = entries.len();
+
+            entries.into_iter().map(move |entry| {
+                if length == 1 {
+                    entry
+                } else {
+                    let overridden_title =
+                        override_title_with_date(&title, entry.note.preamble.created_at);
+
+                    IndexEntry {
+                        rendered_title_override: Some(overridden_title),
+                        ..entry
+                    }
+                }
+            })
+        })
+        .collect::<Vec<_>>()
+}
+
+fn override_title_with_date(title: &str, created_at: DateTime<FixedOffset>) -> String {
+    let formatted_date = created_at
+        .format("(%Y-%m-%d %H:%M:%S)")
+        .to_string()
+        .bright_blue();
+
+    format!("{title} {formatted_date}")
+}
+
 fn pick<T: Send + Sync + 'static, R: Render<T>>(
     picker: &mut Picker<T, R>,
 ) -> anyhow::Result<Option<&T>> {
@@ -392,7 +440,8 @@ fn fuzzy_offset_from_date(date: NaiveDate, offset: &str) -> Result<NaiveDate, an
 
 #[cfg(test)]
 mod tests {
-    use quicknotes::Editor;
+    use chrono::TimeZone;
+    use quicknotes::{Editor, NotePreamble};
     use serde::de::value::StrDeserializer;
     use serde::de::IntoDeserializer;
 
@@ -499,5 +548,148 @@ mod tests {
             res.is_err(),
             "should not have been able to perform this conversion"
         );
+    }
+
+    #[test]
+    fn build_index_entries_does_not_override_titles_for_unique_notes() {
+        let make_created_at = |day_offset: u32| {
+            FixedOffset::east_opt(-7 * 60 * 60)
+                .unwrap()
+                .with_ymd_and_hms(2015, 10, 21 + day_offset, 7, 28, 0)
+                .single()
+                .unwrap()
+        };
+
+        let notes = HashMap::from([
+            (
+                PathBuf::from("/home/ferris/Documents/quicknotes/notes/abc.txt"),
+                IndexedNote {
+                    preamble: NotePreamble {
+                        created_at: make_created_at(0),
+                        title: "abc".to_string(),
+                    },
+                    kind: quicknotes::NoteKind::Note,
+                },
+            ),
+            (
+                PathBuf::from("/home/ferris/Documents/quicknotes/notes/def.txt"),
+                IndexedNote {
+                    preamble: NotePreamble {
+                        created_at: make_created_at(1),
+                        title: "def".to_string(),
+                    },
+                    kind: quicknotes::NoteKind::Note,
+                },
+            ),
+            (
+                PathBuf::from("/home/ferris/Documents/quicknotes/notes/xyz.txt"),
+                IndexedNote {
+                    preamble: NotePreamble {
+                        created_at: make_created_at(2),
+                        title: "xyz".to_string(),
+                    },
+                    kind: quicknotes::NoteKind::Note,
+                },
+            ),
+        ]);
+
+        let overrides = build_index_entires(notes)
+            .into_iter()
+            .map(|entry| entry.rendered_title_override)
+            .collect::<Vec<_>>();
+
+        assert!(overrides == vec![None, None, None]);
+    }
+
+    #[test]
+    fn build_index_entries_overrides_titles_of_notes_with_matching_titles() {
+        let make_created_at = |day_offset: u32| {
+            FixedOffset::east_opt(-7 * 60 * 60)
+                .unwrap()
+                .with_ymd_and_hms(2015, 10, 21 + day_offset, 7, 28, 0)
+                .single()
+                .unwrap()
+        };
+
+        let notes = HashMap::from([
+            (
+                PathBuf::from("/home/ferris/Documents/quicknotes/notes/abc.txt"),
+                IndexedNote {
+                    preamble: NotePreamble {
+                        created_at: make_created_at(0),
+                        title: "abc".to_string(),
+                    },
+                    kind: quicknotes::NoteKind::Note,
+                },
+            ),
+            (
+                PathBuf::from("/home/ferris/Documents/quicknotes/notes/def.txt"),
+                IndexedNote {
+                    preamble: NotePreamble {
+                        created_at: make_created_at(1),
+                        title: "def".to_string(),
+                    },
+                    kind: quicknotes::NoteKind::Note,
+                },
+            ),
+            (
+                PathBuf::from("/home/ferris/Documents/quicknotes/notes/abc2.txt"),
+                IndexedNote {
+                    preamble: NotePreamble {
+                        created_at: make_created_at(2),
+                        title: "abc".to_string(),
+                    },
+                    kind: quicknotes::NoteKind::Note,
+                },
+            ),
+        ]);
+
+        let overrides = build_index_entires(notes)
+            .into_iter()
+            .map(|entry| (entry.path, entry.rendered_title_override))
+            .collect::<HashMap<_, _>>();
+
+        let expected = HashMap::from([
+            (
+                PathBuf::from("/home/ferris/Documents/quicknotes/notes/def.txt"),
+                None,
+            ),
+            (
+                PathBuf::from("/home/ferris/Documents/quicknotes/notes/abc.txt"),
+                Some(override_title_with_date("abc", make_created_at(0))),
+            ),
+            (
+                PathBuf::from("/home/ferris/Documents/quicknotes/notes/abc2.txt"),
+                Some(override_title_with_date("abc", make_created_at(2))),
+            ),
+        ]);
+
+        assert_eq!(overrides, expected);
+    }
+
+    #[test]
+    fn title_override_starts_with_title() {
+        let created_at = FixedOffset::east_opt(-7 * 60 * 60)
+            .unwrap()
+            .with_ymd_and_hms(2015, 10, 21, 7, 28, 0)
+            .single()
+            .unwrap();
+
+        let title = override_title_with_date("abc", created_at);
+
+        assert!(title.starts_with("abc "));
+    }
+
+    #[test]
+    fn title_override_contains_the_date() {
+        let created_at = FixedOffset::east_opt(-7 * 60 * 60)
+            .unwrap()
+            .with_ymd_and_hms(2015, 10, 21, 7, 28, 0)
+            .single()
+            .unwrap();
+
+        let title = override_title_with_date("abc", created_at);
+
+        assert!(title.contains("2015-10-21 07:28:00"));
     }
 }
