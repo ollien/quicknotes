@@ -614,13 +614,14 @@ dependencies = [
 
 [[package]]
 name = "nucleo-picker"
-version = "0.7.0-alpha.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66e08d4f46781b80ff501f4bb9e448d1ddc161003adabc0562a5ed286e9bfb0e"
+checksum = "24cf7ad2e101658755dce7dffbb15f40cf98587ef7be9a356995ab6f09597c85"
 dependencies = [
  "crossterm",
  "memchr",
  "nucleo",
+ "parking_lot",
  "unicode-segmentation",
  "unicode-width 0.2.0",
 ]
