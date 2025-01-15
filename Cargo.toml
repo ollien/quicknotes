@@ -6,7 +6,7 @@ license = "BSD-3-Clause"
 homepage = "https://github.com/ollien/quicknotes"
 repository = "https://github.com/ollien/quicknotes"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.83"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
