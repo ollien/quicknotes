@@ -147,7 +147,7 @@ fn cli_command() -> ClapCommand {
         )
         .subcommand(
             ClapCommand::new("daily")
-                .arg(Arg::new("offset").required(false))
+                .arg(Arg::new("offset").num_args(1..).required(false))
                 .about("Open or create a daily note")
                 .long_about(
                     concat!(
@@ -205,10 +205,12 @@ fn run_new(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches)
 fn run_daily(config: &NoteConfig, editor: &CommandEditor, args: &clap::ArgMatches) {
     ensure_daily_dir_exists(config).unwrap_or_exit("could not create dailies directory");
     let now = Local::now();
-    let note_date = args.get_one::<String>("offset").map_or_else(
+    let note_date = args.get_many::<String>("offset").map_or_else(
         || now.date_naive(),
-        |offset| {
-            fuzzy_offset_from_date(now.date_naive(), offset)
+        |offset_args| {
+            let offset = offset_args.into_iter().join(" ");
+
+            fuzzy_offset_from_date(now.date_naive(), &offset)
                 .unwrap_or_exit("could not parse daily note offset")
         },
     );
